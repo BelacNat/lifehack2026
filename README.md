@@ -6,12 +6,8 @@ EcoHabit is a Flutter application that helps households reduce food waste before
 
 | Project information | Details |
 |---|---|
-| Team | _Add team member names_ |
-| Advisor | _Add advisor name, if applicable_ |
-| Proposed achievement | _Add level of achievement, if applicable_ |
+| Team | Ryan Tan, Caleb Tan, Yong See, Kong Qi Yuan |
 | GitHub repository | [BelacNat/lifehack2026](https://github.com/BelacNat/lifehack2026) |
-| Project log | _Add project log link, if applicable_ |
-| Deployment | _Add deployment link, if applicable_ |
 
 ## Contents
 
@@ -29,12 +25,8 @@ EcoHabit is a Flutter application that helps households reduce food waste before
 - [Database and backend](#database-and-backend)
 - [Software engineering principles](#software-engineering-principles)
 - [Features](#features)
-- [Testing](#testing)
 - [Getting started](#getting-started)
 - [Demo guide](#demo-guide)
-- [Known limitations](#known-limitations)
-- [Timeline and development plan](#timeline-and-development-plan)
-- [Team collaboration](#team-collaboration)
 
 ---
 
@@ -100,12 +92,8 @@ EcoHabit is designed for:
 | Database | Supabase Postgres | Inventory, avoided-purchase, profile, and gamification data |
 | Backend logic | Supabase Edge Functions | Secure server-side AI requests |
 | Local persistence | SharedPreferences | Quest progress, claimed rewards, and local preferences |
-| On-device recognition | Google ML Kit Text Recognition | Reads handwritten or printed grocery text on Android and iOS |
 | AI recognition | OpenAI vision through an Edge Function | Identifies visible grocery items from an image |
 | AI recipes | OpenAI recipe suggestion service | Produces recipes using active fridge ingredients |
-| Recipe imagery | Wikipedia API | Retrieves a representative image for recipe details |
-| Media input | image_picker | Camera and gallery image selection |
-| Networking | http | External API communication |
 
 ---
 
@@ -288,8 +276,6 @@ The repository uses feature ownership, small commits, and a documented rebase wo
 
 go_router watches Supabase authentication changes. Signed-out users are redirected to the sign-in page, while authenticated users enter the main four-tab application shell.
 
-**Status:** Implemented, subject to the profile-schema limitation described below.
-
 ---
 
 ### 02 — Pause Before Purchase
@@ -317,17 +303,11 @@ The parser handles entries such as:
 
 Normalised shopping-list names are compared with active inventory. When a match is found, EcoHabit presents a warning and lets the user make the final decision.
 
-**Status:** Implemented with live Supabase inventory data.
-
 ---
 
 ### 03 — Grocery scanning and OCR
 
-EcoHabit reduces manual entry by supporting two complementary recognition paths on Android and iOS.
-
-#### Text recognition
-
-ML Kit extracts handwritten or printed grocery text locally. The recognised text is converted into editable inventory candidates.
+EcoHabit reduces manual entry by supporting one recognition path on Android and iOS.
 
 #### Food-image recognition
 
@@ -341,19 +321,6 @@ Before saving, users can:
 - edit an incorrect name;
 - deselect an unwanted detection;
 - add the selected results to inventory.
-
-<table>
-  <tr>
-    <td align="center"><img src="Codex%20Image%2029%20Aug%202026%2C%2017_49_12.png" alt="Handwritten grocery-list recognition input" width="320"></td>
-    <td align="center"><img src="Codex%20Image%2029%20Aug%202026%2C%2017_52_44.png" alt="Visible grocery recognition input" width="320"></td>
-  </tr>
-  <tr>
-    <td align="center"><em>Handwritten grocery-list input</em></td>
-    <td align="center"><em>Visible grocery-item input</em></td>
-  </tr>
-</table>
-
-**Status:** Implemented on Android and iOS. Other platforms use the unsupported-platform fallback.
 
 ---
 
@@ -371,8 +338,6 @@ The Fridge tab turns an expiry warning into an immediate action.
 **How rewards are calculated**
 
 Rescued food awards category-weighted points rather than treating every item identically. The event is passed into the gamification layer, which updates relevant progress and attempts to sync points and streaks to Supabase.
-
-**Status:** Core rescue flow implemented.
 
 ---
 
@@ -394,8 +359,6 @@ When food is available, EcoHabit can generate recipes that prioritise ingredient
 
 Recipe completion is not only a visual confirmation. It updates the underlying stock, creating a closed loop between recipe choice and the next inventory view.
 
-**Status:** Client integration implemented. A corresponding recipe Edge Function is required but is not included in this repository.
-
 ---
 
 ### 06 — Impact dashboard
@@ -413,8 +376,6 @@ The Home tab summarises the user's current sustainability state.
 - shopping insight.
 
 Dashboard inventory and profile sections are connected to Supabase. The category breakdown lets users move from a high-level count to the individual food items behind it.
-
-**Status:** Partially dynamic. The displayed date and shopping insight are currently static prototype content.
 
 ---
 
@@ -435,8 +396,6 @@ EcoHabit turns repeated actions into visible progress.
 
 The goal is not to reward opening the application. The intended loop connects meaningful actions—avoiding a purchase, logging food, or rescuing an expiring item—to progress that the user can see.
 
-**Status:** Hybrid local/backend prototype. Some progress rules currently trigger more broadly than the intended final behaviour.
-
 ---
 
 ### 08 — Leaderboard and friends
@@ -454,61 +413,6 @@ The Quests area also demonstrates the community layer.
 - seeded friend requests;
 - accept and decline interactions;
 - an add-friend interface.
-
-**Status:** Prototype. Other leaderboard entries and friend relationships are in-memory mock data and reset when the application restarts.
-
----
-
-### 09 — Expiry notifications
-
-EcoHabit can ask web users for browser notification permission and send a reminder at their selected time while the application is open.
-
-**Status:** Web prototype only. It polls once per minute and prevents duplicate reminders locally. Background and native mobile scheduling are not yet implemented.
-
----
-
-## Testing
-
-### Automated tests
-
-| Test file | Coverage |
-|---|---|
-| <code>inventory_ocr_parser_test.dart</code> | OCR text cleaning and candidate extraction |
-| <code>shopping_list_checker_test.dart</code> | Quantities, number words, containers, plurals, and inventory matching |
-| <code>inventory_page_test.dart</code> | Inventory interface behaviour |
-| <code>widget_test.dart</code> | Application smoke-test scaffold |
-
-Run the test suite with:
-
-~~~bash
-flutter test
-~~~
-
-### Static analysis
-
-~~~bash
-flutter analyze
-~~~
-
-### Build verification
-
-~~~bash
-flutter build web
-~~~
-
-The repository was reviewed with Flutter static analysis and a production web build. Both completed successfully. The test files should still be run in the development machine's native Flutter environment; one smoke-test expectation may require updating to match the current Home label.
-
-### Manual test scenarios
-
-1. Register a new account and verify the authentication redirect.
-2. Add an inventory item and confirm it appears after refresh.
-3. Enter the same item in the shopping checker and choose **Skip**.
-4. Scan a grocery list, edit a detection, deselect another, and save.
-5. Add an item expiring today and mark it as eaten.
-6. Generate a recipe, change servings, cook it, and confirm stock deduction.
-7. Complete a quest action and verify progress and reward behaviour.
-8. Switch leaderboard filters and exercise the friend-request interactions.
-9. Enable a web reminder and confirm the selected minute does not notify twice.
 
 ---
 
@@ -578,87 +482,6 @@ flutter build apk
 flutter build ios
 flutter build web
 ~~~
-
----
-
-## Demo guide
-
-For a short end-to-end demonstration:
-
-1. **Sign in** and open the Inventory tab.
-2. **Add or scan groceries**, then review the recognised candidates.
-3. **Check a shopping list** containing one of those groceries and skip the duplicate.
-4. Add an item with an expiry date of today.
-5. Open **Fridge** and choose **I ate this**, or generate a rescue recipe.
-6. Open **Quests** to show points, quest progress, ranking filters, and the friends prototype.
-7. Return to **Home** to show the aggregated impact and inventory summary.
-
-For the clearest demo, prepare the required Supabase rows and recipe service before presenting.
-
----
-
-## Known limitations
-
-This repository represents a hackathon prototype. The most important gaps are:
-
-1. **The committed backend is incomplete.** Client code expects <code>profiles.residential_area</code>, a <code>user_stats</code> table, and point/streak RPCs that are not fully defined by the checked-in migrations.
-2. **Profile naming differs in SQL.** One migration creates <code>profiles.township</code>, while the application reads and writes <code>residential_area</code>.
-3. **Account bootstrap is missing.** No committed database trigger creates all required profile and statistics rows after sign-up.
-4. **The recipe function is external.** The client calls an AI recipe service, but the matching <code>openai-recipe-suggestions</code> Edge Function source is not included.
-5. **Inventory is shared in the demo schema.** <code>fridge_items</code> and <code>avoided_purchases</code> have no user identifier and use permissive prototype row-level security.
-6. **Quest definitions are not fully aligned.** Local quest rewards differ from the seeded SQL catalogue, and two client quests are absent from that seed.
-7. **Quest progress is device-wide.** SharedPreferences state is not currently namespaced per signed-in user.
-8. **Social data is simulated.** Leaderboard opponents, item totals, and friend relationships are mock or in-memory data.
-9. **Undo is not reachable after rescue.** Consumed food leaves the urgent list immediately, so the existing undo action cannot be accessed there.
-10. **Some progress triggers are too broad.** Opening the Fridge can advance inventory-related progress and may update a zero-waste streak even when no item expires today.
-11. **Notifications are foreground web reminders.** Native scheduled and background delivery are not implemented.
-12. **Some dashboard content is static.** The displayed date and AI shopping insight are hard-coded prototype values.
-13. **Brand naming is inconsistent.** A few areas still use Eco Quest or Fridgewise wording instead of EcoHabit.
-14. **Project setup needs polishing.** The original README referenced a missing <code>.env.example</code>; default app identifiers, debug signing, web manifest metadata, and continuous integration are not production-ready.
-
----
-
-## Timeline and development plan
-
-| Stage | Outcome | Status |
-|---|---|---|
-| Foundation | Flutter shell, theme, routing, Supabase initialisation, and team ownership | Complete |
-| Authentication | Email/password sign-in, registration, profile, and route protection | Implemented |
-| Inventory | CRUD, sorting, shopping-list matching, and avoided-purchase records | Implemented |
-| Recognition | Mobile text OCR and server-side visual food recognition | Implemented |
-| Rescue | Urgent expiry views, consumption events, and points integration | Implemented |
-| Recipes | AI suggestions, serving scaling, images, and inventory deduction | Client complete; backend function required |
-| Gamification | Quests, points, streak services, leaderboard, and friends | Hybrid prototype |
-| Dashboard | Impact summary, category drill-down, urgent food, and recipe shortcuts | Partially dynamic |
-| Backend hardening | Per-user data, complete migrations, secure RLS, account bootstrap, and RPC alignment | Next priority |
-| Product polish | Native notifications, real social data, consistent branding, and UI screenshots | Planned |
-| Delivery | CI, release identifiers, deployment, accessibility review, and production testing | Planned |
-
-### Recommended next steps
-
-1. Reconcile the database migrations with every table, column, RPC, trigger, and Edge Function used by the client.
-2. Add <code>user_id</code> ownership and restrictive row-level security to household records.
-3. Replace mock leaderboard and friend data with persisted relationships.
-4. Namespace local quest state by authenticated user or move it fully to Supabase.
-5. Implement native background expiry notifications.
-6. Replace static dashboard values and standardise EcoHabit branding.
-7. Add continuous integration for analysis, tests, and web builds.
-8. Capture final application screenshots and add team, advisor, project-log, and deployment links to this README.
-
----
-
-## Team collaboration
-
-The application was split into four low-conflict areas:
-
-| Owner | Area | Primary folder |
-|---|---|---|
-| Person 1 | Inventory and Pause Before Purchase | <code>lib/features/inventory/</code> |
-| Person 2 | Food rescue and AI recipes | <code>lib/features/fridge/</code> |
-| Person 3 | EcoQuests and rewards | <code>lib/features/quests/</code> |
-| Person 4 | Dashboard and integration | <code>lib/features/dashboard/</code> and shared navigation |
-
-See [TEAM_SPLIT.md](TEAM_SPLIT.md) for the branch, migration, and merge workflow.
 
 ---
 
