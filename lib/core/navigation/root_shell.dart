@@ -16,6 +16,7 @@ class RootShell extends StatelessWidget {
       body: navigationShell,
       bottomNavigationBar: NavigationBar(
         selectedIndex: navigationShell.currentIndex,
+        labelBehavior: NavigationDestinationLabelBehavior.alwaysHide,
         onDestinationSelected: (index) => navigationShell.goBranch(
           index,
           initialLocation: index == navigationShell.currentIndex,
@@ -25,6 +26,7 @@ class RootShell extends StatelessWidget {
               (item) => NavigationDestination(
                 icon: Icon(item.icon),
                 label: item.label,
+                tooltip: '',
               ),
             )
             .toList(),
