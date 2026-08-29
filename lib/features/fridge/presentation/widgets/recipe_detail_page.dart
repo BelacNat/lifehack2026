@@ -2,7 +2,9 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../../dashboard/presentation/dashboard_summary_controller.dart';
 import '../../../quests/data/quest_progress_store.dart';
+import '../../../quests/data/streak_service.dart';
 import '../../data/fridge_items_controller.dart';
 import '../../data/fridge_repository.dart';
 import '../../domain/fridge_item.dart';
@@ -119,6 +121,8 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
     return true;
   }
 
+  static const StreakService _streakService = StreakService();
+
   Future<void> _complete() async {
     if (_isCompleting || _isComplete || _usedItems.isEmpty) return;
 
@@ -153,6 +157,22 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
       }).toList(growable: false);
 
       unawaited(QuestProgressStore.recordRecipeCompleted());
+      unawaited(QuestProgressStore.recordFridgeActivityToday());
+
+      final now = DateTime.now();
+      final urgentItemsCleared = !FridgeItemsController.items.value.any(
+        (item) =>
+            !item.isConsumed && item.statusAt(now) == FridgeItemStatus.today,
+      );
+      if (urgentItemsCleared) {
+        try {
+          await _streakService.bumpDailyStreak();
+          DashboardSummaryController.requestRefresh();
+        } catch (_) {
+          // Recipe completion succeeded; a streak sync failure should not
+          // make the completed recipe look like it failed.
+        }
+      }
 
       if (!mounted) return;
       setState(() => _isComplete = true);

@@ -3,6 +3,7 @@ import '../../../core/supabase/supabase_client.dart';
 class DashboardSummary {
   const DashboardSummary({
     required this.displayName,
+    required this.avatarEmoji,
     required this.streakDays,
     required this.bestStreak,
     required this.points,
@@ -10,6 +11,7 @@ class DashboardSummary {
   });
 
   final String displayName;
+  final String avatarEmoji;
   final int streakDays;
   final int bestStreak;
   final int points;
@@ -30,7 +32,7 @@ class DashboardRepository {
 
     final profileRow = await supabase
         .from('profiles')
-        .select('display_name, residential_area')
+        .select('display_name, avatar_emoji, residential_area')
         .eq('id', userId)
         .single();
 
@@ -42,6 +44,7 @@ class DashboardRepository {
 
     return DashboardSummary(
       displayName: profileRow['display_name'] as String,
+      avatarEmoji: profileRow['avatar_emoji'] as String? ?? '🙂',
       residentialArea: profileRow['residential_area'] as String?,
       streakDays: statsRow['streak_days'] as int,
       bestStreak: statsRow['best_streak'] as int,

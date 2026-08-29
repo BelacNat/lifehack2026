@@ -106,10 +106,6 @@ class _ProfilePageState extends State<ProfilePage> {
 
           final summary = snapshot.data!;
           _selectedTown ??= summary.residentialArea;
-          final initials = summary.displayName.trim().isEmpty
-              ? '?'
-              : summary.displayName.trim().substring(0, 1).toUpperCase();
-
           return SingleChildScrollView(
             padding: const EdgeInsets.fromLTRB(20, 24, 20, 32),
             child: Column(
@@ -121,7 +117,7 @@ class _ProfilePageState extends State<ProfilePage> {
                       radius: 28,
                       backgroundColor: theme.colorScheme.primaryContainer,
                       child: Text(
-                        initials,
+                        summary.avatarEmoji,
                         style: TextStyle(
                           color: theme.colorScheme.onPrimaryContainer,
                           fontWeight: FontWeight.w700,

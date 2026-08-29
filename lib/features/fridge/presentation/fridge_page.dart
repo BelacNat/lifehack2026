@@ -213,8 +213,6 @@ class _FridgePageState extends State<FridgePage> {
         _isLoading = false;
       });
       await _notifyNewExpiringItems(items);
-      await _maybeBumpStreak();
-      unawaited(QuestProgressStore.recordFridgeActivityToday());
       if (refreshRecipes) await _generateRecipes();
     } catch (_) {
       if (!mounted) return;
@@ -278,9 +276,8 @@ class _FridgePageState extends State<FridgePage> {
     });
   }
 
-  /// Bumps the streak every time the "everything expiring today is
-  /// cleared" state is freshly reached — not just once per calendar day —
-  /// so re-populating today's queue and clearing it again counts again.
+  /// Records a zero-waste day after a qualifying sustainability action.
+  /// The server RPC is the final guard that makes this idempotent per date.
   Future<void> _maybeBumpStreak() async {
     if (!_allUrgentItemsCleared) {
       _streakCountedForCurrentClear = false;
@@ -319,6 +316,11 @@ class _FridgePageState extends State<FridgePage> {
 
       var message = nextValue ? 'Marked as consumed.' : 'Moved back to fridge.';
       if (nextValue) {
+        unawaited(QuestProgressStore.recordFridgeActivityToday());
+      }
+      final rescuedBeforeExpiry = nextValue &&
+          item.statusAt(DateTime.now()) != FridgeItemStatus.overdue;
+      if (rescuedBeforeExpiry) {
         final points = PointsCalculator.pointsForCategory(item.category);
         try {
           await _pointsService.awardFoodRescuePoints(
