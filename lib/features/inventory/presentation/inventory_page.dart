@@ -26,6 +26,7 @@ class _InventoryPageState extends State<InventoryPage> {
   final _ocrParser = const InventoryOcrParser();
   bool _loadingInventory = true;
   bool _scanningInventory = false;
+  bool _showTextInput = false;
   String? _inventoryError;
   ShoppingListResult? _result;
   ShoppingSuggestion? _savingAvoidance;
@@ -146,9 +147,9 @@ class _InventoryPageState extends State<InventoryPage> {
     try {
       final recognition = await _ocrService.recognize(source);
       if (!mounted || recognition == null) return;
-      final detected = _ocrParser.mergeImageLabels(
+      final detected = _ocrParser.mergeImageDetections(
         _ocrParser.parse(recognition.text),
-        recognition.imageLabels,
+        recognition.imageDetections,
       );
       if (detected.isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -297,44 +298,76 @@ class _InventoryPageState extends State<InventoryPage> {
           ),
           const SizedBox(height: 8),
           Text(
-            'Paste a list separated by commas or new lines. We’ll compare it with what’s already at home.',
+            'Scan your groceries to quickly add what you have at home.',
             style: Theme.of(context)
                 .textTheme
                 .bodyMedium
                 ?.copyWith(color: colors.onSurfaceVariant),
           ),
           const SizedBox(height: 20),
-          TextField(
-            controller: _shoppingController,
-            minLines: 4,
-            maxLines: 7,
-            textCapitalization: TextCapitalization.sentences,
-            decoration: InputDecoration(
-              labelText: 'Shopping list',
-              alignLabelWithHint: true,
-              hintText:
-                  '12 eggs, 1 carton of milk,\n1 bag of bacon, 1 box of spaghetti',
-              border: const OutlineInputBorder(),
-              suffixIcon: _shoppingController.text.isEmpty
-                  ? null
-                  : IconButton(
-                      tooltip: 'Clear',
-                      onPressed: () => setState(() {
-                        _shoppingController.clear();
-                        _result = null;
-                      }),
-                      icon: const Icon(Icons.clear),
-                    ),
-            ),
-            onChanged: (_) => setState(() {}),
-            onSubmitted: (_) => _checkList(),
-          ),
-          const SizedBox(height: 12),
           FilledButton.icon(
-            onPressed: _checkList,
-            icon: const Icon(Icons.search),
-            label: const Text('Check before I shop'),
+            key: const Key('primary-scan-button'),
+            onPressed: _scanningInventory ? null : _scanInventory,
+            icon: _scanningInventory
+                ? const SizedBox.square(
+                    dimension: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.document_scanner_outlined),
+            label: Text(
+              _scanningInventory ? 'Scanning groceries…' : 'Scan groceries',
+            ),
           ),
+          Align(
+            alignment: Alignment.center,
+            child: TextButton.icon(
+              key: const Key('show-text-input-button'),
+              onPressed: () => setState(() {
+                _showTextInput = !_showTextInput;
+              }),
+              icon: Icon(
+                _showTextInput ? Icons.expand_less : Icons.edit_outlined,
+              ),
+              label: Text(
+                _showTextInput ? 'Hide text input' : 'Enter as text',
+              ),
+            ),
+          ),
+          if (_showTextInput) ...[
+            const SizedBox(height: 8),
+            TextField(
+              key: const Key('shopping-list-text-field'),
+              controller: _shoppingController,
+              minLines: 4,
+              maxLines: 7,
+              textCapitalization: TextCapitalization.sentences,
+              decoration: InputDecoration(
+                labelText: 'Shopping list',
+                alignLabelWithHint: true,
+                hintText:
+                    '12 eggs, 1 carton of milk,\n1 bag of bacon, 1 box of spaghetti',
+                border: const OutlineInputBorder(),
+                suffixIcon: _shoppingController.text.isEmpty
+                    ? null
+                    : IconButton(
+                        tooltip: 'Clear',
+                        onPressed: () => setState(() {
+                          _shoppingController.clear();
+                          _result = null;
+                        }),
+                        icon: const Icon(Icons.clear),
+                      ),
+              ),
+              onChanged: (_) => setState(() {}),
+              onSubmitted: (_) => _checkList(),
+            ),
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed: _checkList,
+              icon: const Icon(Icons.search),
+              label: const Text('Check before I shop'),
+            ),
+          ],
           if (_result != null) ...[
             const SizedBox(height: 12),
             _ResultCard(
@@ -353,21 +386,6 @@ class _InventoryPageState extends State<InventoryPage> {
                   style: Theme.of(context).textTheme.titleLarge,
                 ),
               ),
-              if (_scanningInventory)
-                const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 16),
-                  child: SizedBox.square(
-                    dimension: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-                )
-              else
-                TextButton.icon(
-                  key: const Key('scan-inventory-button'),
-                  onPressed: _scanInventory,
-                  icon: const Icon(Icons.document_scanner_outlined),
-                  label: const Text('Scan'),
-                ),
               TextButton.icon(
                 onPressed: _scanningInventory ? null : _addInventoryItem,
                 icon: const Icon(Icons.add),

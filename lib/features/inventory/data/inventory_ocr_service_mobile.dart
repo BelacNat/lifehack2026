@@ -6,6 +6,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../core/supabase/supabase_client.dart';
+import '../domain/inventory_ocr_detection.dart';
 import 'inventory_ocr_service.dart';
 
 InventoryOcrService createInventoryOcrService() => _MobileOcrService();
@@ -25,9 +26,9 @@ class _MobileOcrService implements InventoryOcrService {
       source: source == InventoryImageSource.camera
           ? ImageSource.camera
           : ImageSource.gallery,
-      imageQuality: 82,
-      maxWidth: 1600,
-      maxHeight: 1600,
+      imageQuality: 92,
+      maxWidth: 2048,
+      maxHeight: 2048,
     );
     if (image == null) return null;
     final input = InputImage.fromFilePath(image.path);
@@ -37,14 +38,14 @@ class _MobileOcrService implements InventoryOcrService {
       final foods = await _recognizeFoods(image);
       return InventoryRecognitionResult(
         text: recognizedText.text,
-        imageLabels: foods,
+        imageDetections: foods,
       );
     } finally {
       await recognizer.close();
     }
   }
 
-  Future<List<String>> _recognizeFoods(XFile image) async {
+  Future<List<InventoryOcrDetection>> _recognizeFoods(XFile image) async {
     try {
       final bytes = await image.readAsBytes();
       final response = await supabase.functions.invoke(
@@ -57,11 +58,30 @@ class _MobileOcrService implements InventoryOcrService {
       final data = response.data;
       final rawFoods = data is Map ? data['foods'] : null;
       if (rawFoods is! List) return const [];
-      return rawFoods
-          .whereType<String>()
-          .map((food) => food.trim().toLowerCase())
-          .where((food) => food.isNotEmpty)
-          .toList(growable: false);
+      final detections = <InventoryOcrDetection>[];
+      for (final rawFood in rawFoods) {
+        if (rawFood is String) {
+          final name = rawFood.trim().toLowerCase();
+          if (name.isNotEmpty) {
+            detections.add(InventoryOcrDetection(name: name));
+          }
+          continue;
+        }
+        if (rawFood is! Map) continue;
+        final rawName = rawFood['name'];
+        if (rawName is! String) continue;
+        final name = rawName.trim().toLowerCase();
+        if (name.isEmpty) continue;
+        final rawQuantity = rawFood['quantity'];
+        final quantity = rawQuantity is num ? rawQuantity.toDouble() : 1.0;
+        detections.add(
+          InventoryOcrDetection(
+            name: name,
+            quantity: quantity.isFinite && quantity > 0 ? quantity : 1,
+          ),
+        );
+      }
+      return detections;
     } on FunctionException {
       return const [];
     } catch (_) {

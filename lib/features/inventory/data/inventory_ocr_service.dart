@@ -1,13 +1,15 @@
+import '../domain/inventory_ocr_detection.dart';
+
 enum InventoryImageSource { camera, gallery }
 
 class InventoryRecognitionResult {
   const InventoryRecognitionResult({
     required this.text,
-    this.imageLabels = const [],
+    this.imageDetections = const [],
   });
 
   final String text;
-  final List<String> imageLabels;
+  final List<InventoryOcrDetection> imageDetections;
 }
 
 abstract class InventoryOcrService {

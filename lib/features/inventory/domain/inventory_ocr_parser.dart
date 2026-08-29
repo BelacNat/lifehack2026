@@ -1,4 +1,5 @@
 import 'inventory_item.dart';
+import 'inventory_ocr_detection.dart';
 
 class InventoryOcrParser {
   const InventoryOcrParser();
@@ -19,22 +20,24 @@ class InventoryOcrParser {
     return items;
   }
 
-  List<InventoryItem> mergeImageLabels(
+  List<InventoryItem> mergeImageDetections(
     List<InventoryItem> textItems,
-    Iterable<String> labels, {
+    Iterable<InventoryOcrDetection> detections, {
     DateTime? today,
   }) {
     final now = today ?? DateTime.now();
     final items = List<InventoryItem>.of(textItems);
     final existing = items.map((item) => item.name.toLowerCase()).toSet();
-    for (final label in labels) {
-      final name = _inventoryNameForLabel(label);
+    for (final detection in detections) {
+      final name = _inventoryNameForLabel(detection.name);
       if (name == null || !existing.add(name)) continue;
       final category = _categoryFor(name);
       items.add(
         InventoryItem(
           name: name,
-          quantity: 1,
+          quantity: detection.quantity.isFinite && detection.quantity > 0
+              ? detection.quantity
+              : 1,
           category: category,
           expirationDate: now.add(Duration(days: _shelfLifeDays(category))),
         ),
@@ -42,6 +45,17 @@ class InventoryOcrParser {
     }
     return items;
   }
+
+  List<InventoryItem> mergeImageLabels(
+    List<InventoryItem> textItems,
+    Iterable<String> labels, {
+    DateTime? today,
+  }) =>
+      mergeImageDetections(
+        textItems,
+        labels.map((label) => InventoryOcrDetection(name: label)),
+        today: today,
+      );
 
   String? _inventoryNameForLabel(String label) {
     final normalized = label.toLowerCase().trim();

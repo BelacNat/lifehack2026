@@ -1,6 +1,7 @@
 import 'package:ecohabit/features/inventory/data/inventory_repository.dart';
 import 'package:ecohabit/features/inventory/data/inventory_ocr_service.dart';
 import 'package:ecohabit/features/inventory/domain/inventory_item.dart';
+import 'package:ecohabit/features/inventory/domain/inventory_ocr_detection.dart';
 import 'package:ecohabit/features/inventory/domain/shopping_list_checker.dart';
 import 'package:ecohabit/features/inventory/presentation/inventory_page.dart';
 import 'package:flutter/material.dart';
@@ -13,7 +14,7 @@ void main() {
     final ocr = _FakeInventoryOcrService(
       const InventoryRecognitionResult(
         text: '500 ml Milk',
-        imageLabels: ['Apple'],
+        imageDetections: [InventoryOcrDetection(name: 'Apple', quantity: 3)],
       ),
     );
     await tester.pumpWidget(
@@ -23,19 +24,44 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Scan'));
+    await tester.tap(find.text('Scan groceries'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Choose from photos'));
     await tester.pumpAndSettle();
 
     expect(find.text('Review 2 detected items'), findsOneWidget);
-    expect(find.text('1 apple'), findsOneWidget);
+    expect(find.text('3 apple'), findsOneWidget);
     expect(find.text('500 ml of milk'), findsOneWidget);
     await tester.tap(find.text('Add selected (2)'));
     await tester.pumpAndSettle();
 
     expect(repository.items, hasLength(2));
+    expect(repository.items.firstWhere((item) => item.name == 'apple').quantity,
+        3);
     expect(find.textContaining('2 items added'), findsOneWidget);
+  });
+
+  testWidgets('scanner is primary and text input starts collapsed',
+      (tester) async {
+    final repository = _FakeInventoryRepository();
+    final ocr = _FakeInventoryOcrService(
+      const InventoryRecognitionResult(text: '', imageDetections: []),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: InventoryPage(repository: repository, ocrService: ocr),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('primary-scan-button')), findsOneWidget);
+    expect(find.byKey(const Key('shopping-list-text-field')), findsNothing);
+
+    await tester.tap(find.text('Enter as text'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('shopping-list-text-field')), findsOneWidget);
+    expect(find.text('Check before I shop'), findsOneWidget);
   });
 
   testWidgets('adds an inventory item with its measurement', (tester) async {
@@ -125,7 +151,12 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.enterText(find.byType(TextField).first, 'a stick of butter');
+    await tester.tap(find.text('Enter as text'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('shopping-list-text-field')),
+      'a stick of butter',
+    );
     tester.testTextInput.hide();
     await tester.tap(find.text('Check before I shop'));
     await tester.pumpAndSettle();
@@ -154,7 +185,12 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.enterText(find.byType(TextField).first, 'a stick of butter');
+    await tester.tap(find.text('Enter as text'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('shopping-list-text-field')),
+      'a stick of butter',
+    );
     await tester.tap(find.text('Check before I shop'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('I’ll skip this'));
@@ -167,8 +203,9 @@ void main() {
       findsOneWidget,
     );
     expect(find.textContaining('purchase avoided!'), findsOneWidget);
-    final shoppingField =
-        tester.widget<TextField>(find.byType(TextField).first);
+    final shoppingField = tester.widget<TextField>(
+      find.byKey(const Key('shopping-list-text-field')),
+    );
     expect(shoppingField.controller!.text, isEmpty);
   });
 
@@ -189,7 +226,12 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.enterText(find.byType(TextField).first, 'whole milk');
+    await tester.tap(find.text('Enter as text'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('shopping-list-text-field')),
+      'whole milk',
+    );
     await tester.tap(find.text('Check before I shop'));
     await tester.pumpAndSettle();
 
@@ -198,8 +240,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(repository.avoidedPurchases, isEmpty);
-    final shoppingField =
-        tester.widget<TextField>(find.byType(TextField).first);
+    final shoppingField = tester.widget<TextField>(
+      find.byKey(const Key('shopping-list-text-field')),
+    );
     expect(shoppingField.controller!.text, 'whole milk');
     expect(find.textContaining('stays on your list'), findsOneWidget);
   });

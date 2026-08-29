@@ -1,4 +1,5 @@
 import 'package:ecohabit/features/inventory/domain/inventory_item.dart';
+import 'package:ecohabit/features/inventory/domain/inventory_ocr_detection.dart';
 import 'package:ecohabit/features/inventory/domain/inventory_ocr_parser.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -40,12 +41,17 @@ void main() {
   });
 
   test('accepts specific vision foods while filtering generic labels', () {
-    final items = parser.mergeImageLabels(
+    final items = parser.mergeImageDetections(
       const [],
-      ['red delicious apple', 'Fruit', 'Food'],
+      const [
+        InventoryOcrDetection(name: 'red delicious apple', quantity: 4),
+        InventoryOcrDetection(name: 'Fruit'),
+        InventoryOcrDetection(name: 'Food'),
+      ],
       today: today,
     );
 
     expect(items.map((item) => item.name), ['red delicious apple']);
+    expect(items.single.quantity, 4);
   });
 }

@@ -40,20 +40,30 @@ Deno.serve(async (request) => {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      model: 'gpt-4o-mini',
+      model: 'gpt-5.6-terra',
       store: false,
+      reasoning: { effort: 'low' },
       input: [
+        {
+          role: 'developer',
+          content: [
+            {
+              type: 'input_text',
+              text: 'You are a conservative grocery inventory image detector. Identify only food, drink, and grocery items that are clearly visible. Return one entry per distinct item using a short, singular, common grocery name; omit brands unless needed to identify the item. Combine duplicate visible units into one quantity. Count only discrete items or packages actually visible. Do not convert weights or volumes into a quantity, and do not infer hidden contents or package multipacks unless individual units are visible. Exclude uncertain objects, generic categories, plates, containers, furniture, people, and background objects. If the image is blank, unclear, or has no clearly identifiable groceries, return an empty foods array.',
+            },
+          ],
+        },
         {
           role: 'user',
           content: [
             {
               type: 'input_text',
-              text: 'Identify every visible food or grocery item in this image. Return specific common inventory names such as apple, milk, bread, or rice. Include packaged food based on visible packaging. Do not include plates, containers, furniture, generic categories such as food or fruit, or uncertain objects.',
+              text: 'Analyze this grocery photo.',
             },
             {
               type: 'input_image',
               image_url: `data:${mediaType};base64,${imageBase64}`,
-              detail: 'low',
+              detail: 'original',
             },
           ],
         },
@@ -68,7 +78,15 @@ Deno.serve(async (request) => {
             properties: {
               foods: {
                 type: 'array',
-                items: { type: 'string' },
+                items: {
+                  type: 'object',
+                  properties: {
+                    name: { type: 'string' },
+                    quantity: { type: 'integer', minimum: 1, maximum: 100 },
+                  },
+                  required: ['name', 'quantity'],
+                  additionalProperties: false,
+                },
                 maxItems: 30,
               },
             },
@@ -93,7 +111,13 @@ Deno.serve(async (request) => {
   try {
     const parsed = JSON.parse(outputText ?? '')
     const foods = Array.isArray(parsed.foods)
-      ? parsed.foods.filter((food: unknown) => typeof food === 'string')
+      ? parsed.foods.filter(
+          (food: unknown) =>
+            typeof food === 'object' &&
+            food !== null &&
+            typeof (food as { name?: unknown }).name === 'string' &&
+            typeof (food as { quantity?: unknown }).quantity === 'number',
+        )
       : []
     return json({ foods })
   } catch {
