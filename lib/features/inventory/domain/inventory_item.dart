@@ -9,12 +9,30 @@ enum ItemMeasurement {
   final String symbol;
 }
 
+enum InventoryCategory {
+  dairy('Dairy'),
+  produce('Produce'),
+  meat('Meat'),
+  seafood('Seafood'),
+  bakery('Bakery'),
+  pantry('Pantry'),
+  beverage('Beverage'),
+  condiment('Condiment'),
+  frozen('Frozen'),
+  other('Other');
+
+  const InventoryCategory(this.label);
+
+  final String label;
+}
+
 class InventoryItem {
   const InventoryItem({
     this.id,
     required this.name,
     required this.quantity,
     this.measurement = ItemMeasurement.count,
+    this.category = InventoryCategory.other,
     this.expirationDate,
   });
 
@@ -22,6 +40,7 @@ class InventoryItem {
   final String name;
   final double quantity;
   final ItemMeasurement measurement;
+  final InventoryCategory category;
   final DateTime? expirationDate;
 
   String get displayQuantity {

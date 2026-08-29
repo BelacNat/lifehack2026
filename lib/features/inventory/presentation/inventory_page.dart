@@ -245,6 +245,7 @@ class _AddInventoryItemDialogState extends State<_AddInventoryItemDialog> {
   final _nameController = TextEditingController();
   final _expirationController = TextEditingController();
   ItemMeasurement _measurement = ItemMeasurement.count;
+  InventoryCategory? _category;
   DateTime? _expirationDate;
 
   @override
@@ -280,6 +281,7 @@ class _AddInventoryItemDialogState extends State<_AddInventoryItemDialog> {
         name: _nameController.text.trim().toLowerCase(),
         quantity: double.parse(_quantityController.text),
         measurement: _measurement,
+        category: _category!,
         expirationDate: _expirationDate,
       ),
     );
@@ -348,6 +350,28 @@ class _AddInventoryItemDialogState extends State<_AddInventoryItemDialog> {
                 onChanged: (value) {
                   if (value != null) setState(() => _measurement = value);
                 },
+              ),
+              const SizedBox(height: 16),
+              DropdownButtonFormField<InventoryCategory>(
+                key: const Key('category-field'),
+                initialValue: _category,
+                decoration: const InputDecoration(
+                  labelText: 'Category',
+                  hintText: 'Select a food category',
+                  prefixIcon: Icon(Icons.category_outlined),
+                  border: OutlineInputBorder(),
+                ),
+                items: InventoryCategory.values
+                    .map(
+                      (category) => DropdownMenuItem(
+                        value: category,
+                        child: Text(category.label),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (value) => setState(() => _category = value),
+                validator: (value) =>
+                    value == null ? 'Select a category' : null,
               ),
               const SizedBox(height: 16),
               TextFormField(

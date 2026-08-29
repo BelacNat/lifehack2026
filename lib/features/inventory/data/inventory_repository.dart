@@ -8,50 +8,36 @@ abstract class InventoryRepository {
 }
 
 class SupabaseInventoryRepository implements InventoryRepository {
-  static const _table = 'inventory_items';
-
-  Future<String> _userId() async {
-    var user = supabase.auth.currentUser;
-    if (user == null) {
-      final response = await supabase.auth.signInAnonymously();
-      user = response.user;
-    }
-    if (user == null) {
-      throw StateError('Sign in is required to use your inventory.');
-    }
-    return user.id;
-  }
+  static const _table = 'fridge_items';
 
   @override
   Future<List<InventoryItem>> loadItems() async {
-    await _userId();
     final rows = await supabase
         .from(_table)
-        .select('id, name, quantity, measurement, expiration_date')
-        .order('created_at');
+        .select('id, name, category, quantity, unit, expiry_date')
+        .isFilter('consumed_at', null)
+        .order('added_at');
     return rows.map(_fromRow).toList();
   }
 
   @override
   Future<InventoryItem> addItem(InventoryItem item) async {
-    final userId = await _userId();
     final row = await supabase
         .from(_table)
         .insert({
-          'user_id': userId,
           'name': item.name,
+          'category': item.category.name,
           'quantity': item.quantity,
-          'measurement': item.measurement.name,
-          'expiration_date': _dateOnly(item.expirationDate!),
+          'unit': _unitFor(item.measurement),
+          'expiry_date': _dateOnly(item.expirationDate!),
         })
-        .select('id, name, quantity, measurement, expiration_date')
+        .select('id, name, category, quantity, unit, expiry_date')
         .single();
     return _fromRow(row);
   }
 
   @override
   Future<void> deleteItem(int id) async {
-    await _userId();
     await supabase.from(_table).delete().eq('id', id);
   }
 
@@ -60,9 +46,28 @@ class SupabaseInventoryRepository implements InventoryRepository {
       id: row['id'] as int,
       name: row['name'] as String,
       quantity: (row['quantity'] as num).toDouble(),
-      measurement: ItemMeasurement.values.byName(row['measurement'] as String),
-      expirationDate: DateTime.parse(row['expiration_date'] as String),
+      measurement: _measurementFor(row['unit'] as String),
+      category: InventoryCategory.values.byName(row['category'] as String),
+      expirationDate: row['expiry_date'] == null
+          ? null
+          : DateTime.parse(row['expiry_date'] as String),
     );
+  }
+
+  static String _unitFor(ItemMeasurement measurement) {
+    return switch (measurement) {
+      ItemMeasurement.count => 'pcs',
+      ItemMeasurement.weight => 'g',
+      ItemMeasurement.liquid => 'ml',
+    };
+  }
+
+  static ItemMeasurement _measurementFor(String unit) {
+    return switch (unit.toLowerCase()) {
+      'g' || 'kg' => ItemMeasurement.weight,
+      'ml' || 'l' => ItemMeasurement.liquid,
+      _ => ItemMeasurement.count,
+    };
   }
 
   static String _dateOnly(DateTime date) {
