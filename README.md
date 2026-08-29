@@ -531,6 +531,10 @@ flutter build ios
 flutter build web
 ~~~
 
+### Testing environment
+
+The application was manually tested using an **iPhone 17 Pro simulator**.
+
 ---
 
 <p align="center">
