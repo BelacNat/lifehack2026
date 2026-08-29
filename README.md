@@ -1,8 +1,8 @@
-# EcoHabit — LifeHack 2026
+# FridgeWise — LifeHack 2026
 
 > Small green habits, tracked and gamified.
 
-EcoHabit is a Flutter application that helps households reduce food waste before it happens. It connects grocery planning, fridge inventory, expiry rescue, AI-assisted recipes, and sustainability challenges in one mobile-first experience.
+FridgeWise is a Flutter application that helps households reduce food waste before it happens. It connects grocery planning, fridge inventory, expiry rescue, AI-assisted recipes, and sustainability challenges in one mobile-first experience.
 
 | Project information | Details |
 |---|---|
@@ -43,13 +43,13 @@ Food waste often begins with small, disconnected decisions:
 
 Many existing tools address only one part of this journey. A shopping list may help before purchase, while a recipe application helps after purchase, but neither necessarily closes the loop between planning, inventory, consumption, and measurable environmental impact.
 
-EcoHabit treats food rescue as one connected habit cycle:
+FridgeWise treats food rescue as one connected habit cycle:
 
 > **Check before buying → track what is at home → rescue food before expiry → earn progress → repeat**
 
 ### Existing solutions and their gaps
 
-| Existing approach | What it does well | Remaining gap addressed by EcoHabit |
+| Existing approach | What it does well | Remaining gap addressed by FridgeWise |
 |---|---|---|
 | Notes and shopping-list apps | Make grocery planning quick | Do not know what is already in the fridge or warn about likely duplicates |
 | Manual fridge trackers | Record stored food and expiry dates | Data entry can be slow, and the information may not lead to an immediate action |
@@ -57,11 +57,11 @@ EcoHabit treats food rescue as one connected habit cycle:
 | Sustainability trackers | Show challenges, streaks, or impact metrics | May be disconnected from real household food-rescue actions |
 | Loyalty and leaderboard systems | Encourage repeated engagement | Often reward spending rather than avoided waste |
 
-EcoHabit combines these functions into a single application and uses actual inventory events—such as avoiding a duplicate purchase or consuming an expiring item—to drive the user's progress.
+FridgeWise combines these functions into a single application and uses actual inventory events—such as avoiding a duplicate purchase or consuming an expiring item—to drive the user's progress.
 
 ### Aim
 
-EcoHabit aims to make low-waste behaviour:
+FridgeWise aims to make low-waste behaviour:
 
 1. **Preventive** — warn users before they purchase food they already own.
 2. **Timely** — highlight food that should be consumed soon.
@@ -71,7 +71,7 @@ EcoHabit aims to make low-waste behaviour:
 
 ### Target audience
 
-EcoHabit is designed for:
+FridgeWise is designed for:
 
 - students and young adults managing groceries independently;
 - families sharing a household fridge;
@@ -101,7 +101,7 @@ EcoHabit is designed for:
 
 ### System components
 
-EcoHabit follows a feature-oriented Flutter structure. Each major user journey owns its presentation, domain, and data logic where applicable.
+FridgeWise follows a feature-oriented Flutter structure. Each major user journey owns its presentation, domain, and data logic where applicable.
 
 | Component | Responsibility |
 |---|---|
@@ -276,6 +276,12 @@ The repository uses feature ownership, small commits, and a documented rebase wo
 
 go_router watches Supabase authentication changes. Signed-out users are redirected to the sign-in page, while authenticated users enter the main four-tab application shell.
 
+#### Design philosophy and rationale
+
+Authentication is treated as an application-level concern rather than something each feature must handle independently. Supabase Auth is the single source of truth, while go_router enforces access at the routing boundary. This avoids duplicating sign-in checks across screens and prevents users from entering protected flows without a valid session.
+
+The profile deliberately asks only for information that supports the product experience: a display name for personalisation and a residential area for neighbourhood-based community features. Keeping registration lightweight reduces onboarding friction, while separating the profile page from authentication lets account details evolve without complicating the sign-in flow.
+
 ---
 
 ### 02 — Pause Before Purchase
@@ -301,13 +307,19 @@ The parser handles entries such as:
 - <code>1.5 kg chicken breast</code>
 - plural and partial name variations
 
-Normalised shopping-list names are compared with active inventory. When a match is found, EcoHabit presents a warning and lets the user make the final decision.
+Normalised shopping-list names are compared with active inventory. When a match is found, FridgeWise presents a warning and lets the user make the final decision.
+
+#### Design philosophy and rationale
+
+This feature intervenes at the moment a wasteful decision is most preventable: before an item is purchased. Instead of requiring users to remember their entire fridge while shopping, FridgeWise turns existing inventory into timely decision support.
+
+Matching is based on deterministic normalisation rather than generative AI so that results are fast, explainable, and consistent. The application warns instead of blocking because a duplicate can still be intentional—for example, when buying for an event or replenishing a nearly empty item. The **Skip** and **Ignore** choices preserve user autonomy, while recording skipped purchases creates a measurable link between prevention and environmental impact.
 
 ---
 
 ### 03 — Grocery scanning and OCR
 
-EcoHabit reduces manual entry by supporting one recognition path on Android and iOS.
+FridgeWise reduces manual entry by supporting one recognition path on Android and iOS.
 
 #### Food-image recognition
 
@@ -321,6 +333,12 @@ Before saving, users can:
 - edit an incorrect name;
 - deselect an unwanted detection;
 - add the selected results to inventory.
+
+#### Design philosophy and rationale
+
+Scanning is designed to remove the most repetitive part of inventory tracking without pretending that AI recognition is infallible. Images are well suited to flexible AI recognition, while the Supabase Edge Function keeps the OpenAI credential out of the distributed application and gives the client a structured response rather than unvalidated prose.
+
+A human-in-the-loop review step is essential because an incorrect food name would weaken expiry reminders, duplicate detection, and recipe suggestions downstream. FridgeWise therefore treats every detection as a candidate: nothing is saved until the user edits, selects, and confirms it. Supporting both the camera and gallery also lets users choose between capturing groceries immediately and processing an existing image.
 
 ---
 
@@ -339,11 +357,17 @@ The Fridge tab turns an expiry warning into an immediate action.
 
 Rescued food awards category-weighted points rather than treating every item identically. The event is passed into the gamification layer, which updates relevant progress and attempts to sync points and streaks to Supabase.
 
+#### Design philosophy and rationale
+
+The rescue view prioritises urgency over presenting another complete inventory list. Separating food that expires today from food expiring within three days creates a simple decision hierarchy: act now first, then plan ahead. This reduces cognitive load and makes the most useful action visible without additional filtering.
+
+The **I ate this** interaction deliberately maps a real-world action to one clear digital event. That event updates consumption state and feeds the same gamification system used elsewhere, keeping the experience coherent. Category-weighted points recognise that rescuing different foods can represent different amounts of waste, while pull-to-refresh gives users an explicit way to reconcile the screen with the latest shared data.
+
 ---
 
 ### 05 — AI rescue recipes
 
-When food is available, EcoHabit can generate recipes that prioritise ingredients closest to expiry.
+When food is available, FridgeWise can generate recipes that prioritise ingredients closest to expiry.
 
 **What users can do**
 
@@ -358,6 +382,12 @@ When food is available, EcoHabit can generate recipes that prioritise ingredient
 **Inventory-aware completion**
 
 Recipe completion is not only a visual confirmation. It updates the underlying stock, creating a closed loop between recipe choice and the next inventory view.
+
+#### Design philosophy and rationale
+
+Expiry information is only useful when it leads to an achievable next step. The recipe feature therefore changes the experience from “this food is expiring” to “this is what you can make now.” Urgent ingredients are prioritised so recommendations support the application's waste-reduction goal rather than behaving like a generic recipe search.
+
+Serving controls are constrained by available stock to avoid recommending quantities the household cannot actually cook. Confirming a recipe deducts the ingredients used and consumes depleted items, preserving inventory as the source of truth for later warnings and suggestions. Recipe imagery is fetched separately as a motivational aid; it improves recognition and appeal without determining the recipe logic itself.
 
 ---
 
@@ -377,11 +407,17 @@ The Home tab summarises the user's current sustainability state.
 
 Dashboard inventory and profile sections are connected to Supabase. The category breakdown lets users move from a high-level count to the individual food items behind it.
 
+#### Design philosophy and rationale
+
+The dashboard follows progressive disclosure: users first see a concise summary, then open a category or recipe only when they need more detail. The urgent-expiry shelf is placed alongside impact statistics so the page balances reflection on past progress with a concrete next action.
+
+Category totals compress a potentially long inventory into a scannable overview, while drill-down pages keep every summary inspectable. The dashboard reads from the same Supabase-backed inventory and profile data as the feature tabs instead of maintaining a separate copy, reducing the risk of contradictory information. Profile access is kept available from the greeting area without competing with the four primary navigation destinations.
+
 ---
 
 ### 07 — EcoQuests, EcoPoints, and streaks
 
-EcoHabit turns repeated actions into visible progress.
+FridgeWise turns repeated actions into visible progress.
 
 **Implemented behaviour**
 
@@ -395,6 +431,12 @@ EcoHabit turns repeated actions into visible progress.
 **Why it matters**
 
 The goal is not to reward opening the application. The intended loop connects meaningful actions—avoiding a purchase, logging food, or rescuing an expiring item—to progress that the user can see.
+
+#### Design philosophy and rationale
+
+Gamification is used as feedback for sustainable behaviour, not as a separate game layered on top of the application. Quest progress is driven by events produced by the inventory and rescue flows, which makes rewards evidence of a completed action. EcoPoints provide immediate feedback, quests provide short goals, and streaks encourage consistency across days.
+
+The six-quest catalogue is intentionally small enough to remain understandable during a short visit. Category-weighted rescue points add variation while keeping the scoring rule deterministic. For the prototype, local persistence makes claims and progress feel immediate even under network latency, while best-effort Supabase synchronisation provides a path toward account-level persistence without blocking the user interface.
 
 ---
 
@@ -413,6 +455,12 @@ The Quests area also demonstrates the community layer.
 - seeded friend requests;
 - accept and decline interactions;
 - an add-friend interface.
+
+#### Design philosophy and rationale
+
+The community layer uses social proof to make individual food-rescue habits feel collective. Weekly rankings provide a reachable short-term goal, while monthly and overall views recognise sustained effort. Neighbourhood filtering makes comparison more personally relevant than a single global table and supports FridgeWise's Singapore-focused residential-area profile.
+
+Friend requests use explicit accept and decline actions so social connections remain consensual. The current mock and in-memory implementation intentionally validates the navigation, filtering, and interaction model before introducing the greater complexity of persisted relationships, privacy rules, and real-time ranking updates.
 
 ---
 
