@@ -1,13 +1,17 @@
 import 'package:flutter/material.dart';
 
 import '../data/inventory_repository.dart';
+import '../data/inventory_ocr_service.dart';
+import '../data/inventory_ocr_service_factory.dart';
 import '../domain/inventory_item.dart';
+import '../domain/inventory_ocr_parser.dart';
 import '../domain/shopping_list_checker.dart';
 
 class InventoryPage extends StatefulWidget {
-  const InventoryPage({super.key, this.repository});
+  const InventoryPage({super.key, this.repository, this.ocrService});
 
   final InventoryRepository? repository;
+  final InventoryOcrService? ocrService;
 
   @override
   State<InventoryPage> createState() => _InventoryPageState();
@@ -18,7 +22,11 @@ class _InventoryPageState extends State<InventoryPage> {
   final _checker = ShoppingListChecker();
   final _inventory = <InventoryItem>[];
   late final InventoryRepository _repository;
+  late final InventoryOcrService _ocrService;
+  final _ocrParser = const InventoryOcrParser();
   bool _loadingInventory = true;
+  bool _scanningInventory = false;
+  bool _showTextInput = false;
   String? _inventoryError;
   ShoppingListResult? _result;
   ShoppingSuggestion? _savingAvoidance;
@@ -27,6 +35,7 @@ class _InventoryPageState extends State<InventoryPage> {
   void initState() {
     super.initState();
     _repository = widget.repository ?? SupabaseInventoryRepository();
+    _ocrService = widget.ocrService ?? createInventoryOcrService();
     _loadInventory();
   }
 
@@ -95,6 +104,102 @@ class _InventoryPageState extends State<InventoryPage> {
         );
       }
     }
+  }
+
+  Future<void> _scanInventory() async {
+    if (!_ocrService.isSupported) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('OCR scanning is available on Android and iOS.'),
+        ),
+      );
+      return;
+    }
+    final source = await showModalBottomSheet<InventoryImageSource>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Wrap(
+          children: [
+            const ListTile(
+              title: Text('Scan items'),
+              subtitle: Text(
+                'Recognize grocery objects, receipt text, labels, or lists.',
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_camera_outlined),
+              title: const Text('Take a photo'),
+              onTap: () => Navigator.pop(context, InventoryImageSource.camera),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library_outlined),
+              title: const Text('Choose from photos'),
+              onTap: () => Navigator.pop(context, InventoryImageSource.gallery),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (source == null || !mounted) return;
+
+    setState(() => _scanningInventory = true);
+    try {
+      final recognition = await _ocrService.recognize(source);
+      if (!mounted || recognition == null) return;
+      final detected = _ocrParser.mergeImageDetections(
+        _ocrParser.parse(recognition.text),
+        recognition.imageDetections,
+      );
+      if (detected.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content:
+                Text('No grocery items were detected. Try a clearer photo.'),
+          ),
+        );
+        return;
+      }
+      setState(() => _scanningInventory = false);
+      final reviewed = await showDialog<List<InventoryItem>>(
+        context: context,
+        builder: (context) => _ReviewScannedItemsDialog(items: detected),
+      );
+      if (reviewed == null || reviewed.isEmpty || !mounted) return;
+      await _saveScannedItems(reviewed);
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Couldn’t read that image. Try another photo.'),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _scanningInventory = false);
+    }
+  }
+
+  Future<void> _saveScannedItems(List<InventoryItem> items) async {
+    final saved = <InventoryItem>[];
+    for (final item in items) {
+      try {
+        saved.add(await _repository.addItem(item));
+      } catch (_) {
+        // Continue so one invalid OCR result does not discard the other items.
+      }
+    }
+    if (!mounted) return;
+    setState(() => _inventory.addAll(saved));
+    final failed = items.length - saved.length;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          failed == 0
+              ? '${saved.length} ${saved.length == 1 ? 'item' : 'items'} added to your inventory.'
+              : '${saved.length} added; $failed couldn’t be saved.',
+        ),
+      ),
+    );
   }
 
   Future<void> _deleteInventoryItem(InventoryItem item) async {
@@ -193,44 +298,76 @@ class _InventoryPageState extends State<InventoryPage> {
           ),
           const SizedBox(height: 8),
           Text(
-            'Paste a list separated by commas or new lines. We’ll compare it with what’s already at home.',
+            'Scan your groceries to quickly add what you have at home.',
             style: Theme.of(context)
                 .textTheme
                 .bodyMedium
                 ?.copyWith(color: colors.onSurfaceVariant),
           ),
           const SizedBox(height: 20),
-          TextField(
-            controller: _shoppingController,
-            minLines: 4,
-            maxLines: 7,
-            textCapitalization: TextCapitalization.sentences,
-            decoration: InputDecoration(
-              labelText: 'Shopping list',
-              alignLabelWithHint: true,
-              hintText:
-                  '12 eggs, 1 carton of milk,\n1 bag of bacon, 1 box of spaghetti',
-              border: const OutlineInputBorder(),
-              suffixIcon: _shoppingController.text.isEmpty
-                  ? null
-                  : IconButton(
-                      tooltip: 'Clear',
-                      onPressed: () => setState(() {
-                        _shoppingController.clear();
-                        _result = null;
-                      }),
-                      icon: const Icon(Icons.clear),
-                    ),
-            ),
-            onChanged: (_) => setState(() {}),
-            onSubmitted: (_) => _checkList(),
-          ),
-          const SizedBox(height: 12),
           FilledButton.icon(
-            onPressed: _checkList,
-            icon: const Icon(Icons.search),
-            label: const Text('Check before I shop'),
+            key: const Key('primary-scan-button'),
+            onPressed: _scanningInventory ? null : _scanInventory,
+            icon: _scanningInventory
+                ? const SizedBox.square(
+                    dimension: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.document_scanner_outlined),
+            label: Text(
+              _scanningInventory ? 'Scanning groceries…' : 'Scan groceries',
+            ),
           ),
+          Align(
+            alignment: Alignment.center,
+            child: TextButton.icon(
+              key: const Key('show-text-input-button'),
+              onPressed: () => setState(() {
+                _showTextInput = !_showTextInput;
+              }),
+              icon: Icon(
+                _showTextInput ? Icons.expand_less : Icons.edit_outlined,
+              ),
+              label: Text(
+                _showTextInput ? 'Hide text input' : 'Enter as text',
+              ),
+            ),
+          ),
+          if (_showTextInput) ...[
+            const SizedBox(height: 8),
+            TextField(
+              key: const Key('shopping-list-text-field'),
+              controller: _shoppingController,
+              minLines: 4,
+              maxLines: 7,
+              textCapitalization: TextCapitalization.sentences,
+              decoration: InputDecoration(
+                labelText: 'Shopping list',
+                alignLabelWithHint: true,
+                hintText:
+                    '12 eggs, 1 carton of milk,\n1 bag of bacon, 1 box of spaghetti',
+                border: const OutlineInputBorder(),
+                suffixIcon: _shoppingController.text.isEmpty
+                    ? null
+                    : IconButton(
+                        tooltip: 'Clear',
+                        onPressed: () => setState(() {
+                          _shoppingController.clear();
+                          _result = null;
+                        }),
+                        icon: const Icon(Icons.clear),
+                      ),
+              ),
+              onChanged: (_) => setState(() {}),
+              onSubmitted: (_) => _checkList(),
+            ),
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed: _checkList,
+              icon: const Icon(Icons.search),
+              label: const Text('Check before I shop'),
+            ),
+          ],
           if (_result != null) ...[
             const SizedBox(height: 12),
             _ResultCard(
@@ -250,7 +387,7 @@ class _InventoryPageState extends State<InventoryPage> {
                 ),
               ),
               TextButton.icon(
-                onPressed: _addInventoryItem,
+                onPressed: _scanningInventory ? null : _addInventoryItem,
                 icon: const Icon(Icons.add),
                 label: const Text('Add item'),
               ),
@@ -300,7 +437,9 @@ class _InventoryPageState extends State<InventoryPage> {
 }
 
 class _AddInventoryItemDialog extends StatefulWidget {
-  const _AddInventoryItemDialog();
+  const _AddInventoryItemDialog({this.initialItem});
+
+  final InventoryItem? initialItem;
 
   @override
   State<_AddInventoryItemDialog> createState() =>
@@ -309,12 +448,34 @@ class _AddInventoryItemDialog extends StatefulWidget {
 
 class _AddInventoryItemDialogState extends State<_AddInventoryItemDialog> {
   final _formKey = GlobalKey<FormState>();
-  final _quantityController = TextEditingController(text: '1');
-  final _nameController = TextEditingController();
+  late final TextEditingController _quantityController;
+  late final TextEditingController _nameController;
   final _expirationController = TextEditingController();
-  ItemMeasurement _measurement = ItemMeasurement.count;
+  late ItemMeasurement _measurement;
   InventoryCategory? _category;
   DateTime? _expirationDate;
+
+  @override
+  void initState() {
+    super.initState();
+    final item = widget.initialItem;
+    _quantityController = TextEditingController(
+      text: item == null
+          ? '1'
+          : (item.quantity == item.quantity.roundToDouble()
+              ? item.quantity.toInt().toString()
+              : item.quantity.toString()),
+    );
+    _nameController = TextEditingController(text: item?.name ?? '');
+    _measurement = item?.measurement ?? ItemMeasurement.count;
+    _category = item?.category;
+    _expirationDate = item?.expirationDate;
+    if (_expirationDate != null) {
+      final date = _expirationDate!;
+      _expirationController.text = '${date.day.toString().padLeft(2, '0')}/'
+          '${date.month.toString().padLeft(2, '0')}/${date.year}';
+    }
+  }
 
   @override
   void dispose() {
@@ -359,7 +520,9 @@ class _AddInventoryItemDialogState extends State<_AddInventoryItemDialog> {
   Widget build(BuildContext context) {
     return AlertDialog(
       icon: const Icon(Icons.add_home_outlined),
-      title: const Text('Add to home inventory'),
+      title: Text(widget.initialItem == null
+          ? 'Add to home inventory'
+          : 'Review scanned item'),
       content: SingleChildScrollView(
         child: Form(
           key: _formKey,
@@ -495,7 +658,98 @@ class _AddInventoryItemDialogState extends State<_AddInventoryItemDialog> {
         FilledButton.icon(
           onPressed: _save,
           icon: const Icon(Icons.add),
-          label: const Text('Add to inventory'),
+          label: Text(
+              widget.initialItem == null ? 'Add to inventory' : 'Save changes'),
+        ),
+      ],
+    );
+  }
+}
+
+class _ReviewScannedItemsDialog extends StatefulWidget {
+  const _ReviewScannedItemsDialog({required this.items});
+
+  final List<InventoryItem> items;
+
+  @override
+  State<_ReviewScannedItemsDialog> createState() =>
+      _ReviewScannedItemsDialogState();
+}
+
+class _ReviewScannedItemsDialogState extends State<_ReviewScannedItemsDialog> {
+  late final List<InventoryItem> _items = List.of(widget.items);
+  late final Set<int> _selected = Set.of(
+    List<int>.generate(widget.items.length, (index) => index),
+  );
+
+  Future<void> _edit(int index) async {
+    final edited = await showDialog<InventoryItem>(
+      context: context,
+      builder: (context) => _AddInventoryItemDialog(initialItem: _items[index]),
+    );
+    if (edited != null) setState(() => _items[index] = edited);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      icon: const Icon(Icons.document_scanner_outlined),
+      title: Text('Review ${_items.length} detected items'),
+      content: SizedBox(
+        width: double.maxFinite,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'OCR can make mistakes. Deselect anything that is not an item, or edit its details before saving.',
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
+              const SizedBox(height: 12),
+              for (var index = 0; index < _items.length; index++)
+                CheckboxListTile(
+                  key: Key('scanned-item-$index'),
+                  value: _selected.contains(index),
+                  onChanged: (selected) => setState(() {
+                    if (selected ?? false) {
+                      _selected.add(index);
+                    } else {
+                      _selected.remove(index);
+                    }
+                  }),
+                  title: Text(_items[index].displayDescription),
+                  subtitle: Text(
+                    '${_items[index].category.label} • expires ${_items[index].expirationLabel}',
+                  ),
+                  secondary: IconButton(
+                    tooltip: 'Edit ${_items[index].name}',
+                    onPressed: () => _edit(index),
+                    icon: const Icon(Icons.edit_outlined),
+                  ),
+                  controlAffinity: ListTileControlAffinity.leading,
+                  contentPadding: EdgeInsets.zero,
+                ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton.icon(
+          onPressed: _selected.isEmpty
+              ? null
+              : () => Navigator.pop(
+                    context,
+                    [
+                      for (var index = 0; index < _items.length; index++)
+                        if (_selected.contains(index)) _items[index],
+                    ],
+                  ),
+          icon: const Icon(Icons.add_home_outlined),
+          label: Text('Add selected (${_selected.length})'),
         ),
       ],
     );
