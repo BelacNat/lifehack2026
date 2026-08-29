@@ -700,7 +700,7 @@ class _AiRecipeLab extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'AI Rescue Recipes',
+                      'Rescue Recipes',
                       style: theme.textTheme.titleMedium?.copyWith(
                         fontWeight: FontWeight.w800,
                       ),
