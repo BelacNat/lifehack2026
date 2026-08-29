@@ -21,6 +21,7 @@ class _InventoryPageState extends State<InventoryPage> {
   bool _loadingInventory = true;
   String? _inventoryError;
   ShoppingListResult? _result;
+  ShoppingSuggestion? _savingAvoidance;
 
   @override
   void initState() {
@@ -116,6 +117,48 @@ class _InventoryPageState extends State<InventoryPage> {
     }
   }
 
+  Future<void> _skipDuplicate(ShoppingSuggestion suggestion) async {
+    setState(() => _savingAvoidance = suggestion);
+    try {
+      await _repository.recordAvoidedPurchase(suggestion);
+      if (!mounted) return;
+      final current = _result!;
+      final remainingItems = current.items
+          .where((item) => !identical(item, suggestion.item))
+          .toList();
+      final remainingSuggestions = current.suggestions
+          .where((item) => !identical(item, suggestion))
+          .toList();
+      setState(() {
+        _result = ShoppingListResult(
+          items: remainingItems,
+          suggestions: remainingSuggestions,
+        );
+        _shoppingController.text =
+            remainingItems.map((item) => item.displayDescription).join(', ');
+        _shoppingController.selection = TextSelection.collapsed(
+          offset: _shoppingController.text.length,
+        );
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '${suggestion.item.name} removed — purchase avoided!',
+          ),
+        ),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Couldn’t record this choice. Please try again.'),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _savingAvoidance = null);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
@@ -168,6 +211,14 @@ class _InventoryPageState extends State<InventoryPage> {
             icon: const Icon(Icons.search),
             label: const Text('Check before I shop'),
           ),
+          if (_result != null) ...[
+            const SizedBox(height: 12),
+            _ResultCard(
+              result: _result!,
+              savingSuggestion: _savingAvoidance,
+              onSkip: _skipDuplicate,
+            ),
+          ],
           const SizedBox(height: 28),
           Row(
             children: [
@@ -221,10 +272,6 @@ class _InventoryPageState extends State<InventoryPage> {
                 );
               }).toList(),
             ),
-          if (_result != null) ...[
-            const SizedBox(height: 28),
-            _ResultCard(result: _result!),
-          ],
         ],
       ),
     );
@@ -435,9 +482,15 @@ class _AddInventoryItemDialogState extends State<_AddInventoryItemDialog> {
 }
 
 class _ResultCard extends StatelessWidget {
-  const _ResultCard({required this.result});
+  const _ResultCard({
+    required this.result,
+    required this.onSkip,
+    required this.savingSuggestion,
+  });
 
   final ShoppingListResult result;
+  final ValueChanged<ShoppingSuggestion> onSkip;
+  final ShoppingSuggestion? savingSuggestion;
 
   @override
   Widget build(BuildContext context) {
@@ -475,13 +528,35 @@ class _ResultCard extends StatelessWidget {
             if (hasWarnings)
               ...result.suggestions.map(
                 (suggestion) => Padding(
-                  padding: const EdgeInsets.only(top: 6),
-                  child: Text('• ${suggestion.message}'),
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('• ${suggestion.message}'),
+                      const SizedBox(height: 6),
+                      FilledButton.tonalIcon(
+                        onPressed: savingSuggestion == null
+                            ? () => onSkip(suggestion)
+                            : null,
+                        icon: identical(savingSuggestion, suggestion)
+                            ? const SizedBox.square(
+                                dimension: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.remove_shopping_cart_outlined),
+                        label: const Text('I’ll skip this'),
+                      ),
+                    ],
+                  ),
                 ),
               )
             else
               Text(
-                'We didn’t find any of these ${result.items.length} items in your home inventory.',
+                result.items.isEmpty
+                    ? 'Great choice — all duplicate purchases were removed.'
+                    : 'We didn’t find any of these ${result.items.length} items in your home inventory.',
               ),
           ],
         ),

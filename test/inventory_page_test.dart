@@ -1,5 +1,6 @@
 import 'package:ecohabit/features/inventory/data/inventory_repository.dart';
 import 'package:ecohabit/features/inventory/domain/inventory_item.dart';
+import 'package:ecohabit/features/inventory/domain/shopping_list_checker.dart';
 import 'package:ecohabit/features/inventory/presentation/inventory_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -74,11 +75,76 @@ void main() {
     expect(repository.deletedIds, [7]);
     expect(find.textContaining('2 apples'), findsNothing);
   });
+
+  testWidgets('shows a description warning directly below the check button',
+      (tester) async {
+    final repository = _FakeInventoryRepository()
+      ..items.add(
+        InventoryItem(
+          id: 8,
+          name: 'butter',
+          quantity: 250,
+          measurement: ItemMeasurement.weight,
+          expirationDate: DateTime(2026, 9, 20),
+        ),
+      );
+    await tester.pumpWidget(
+      MaterialApp(home: InventoryPage(repository: repository)),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField).first, 'a stick of butter');
+    tester.testTextInput.hide();
+    await tester.tap(find.text('Check before I shop'));
+    await tester.pumpAndSettle();
+
+    final buttonY = tester.getBottomLeft(find.text('Check before I shop')).dy;
+    final warningY =
+        tester.getTopLeft(find.text('WAIT! Check your kitchen first')).dy;
+    expect(warningY, greaterThan(buttonY));
+    expect(find.textContaining('250 g of butter'), findsOneWidget);
+  });
+
+  testWidgets('skips a duplicate and records the avoided purchase',
+      (tester) async {
+    final repository = _FakeInventoryRepository()
+      ..items.add(
+        InventoryItem(
+          id: 8,
+          name: 'butter',
+          quantity: 250,
+          measurement: ItemMeasurement.weight,
+          expirationDate: DateTime(2026, 9, 20),
+        ),
+      );
+    await tester.pumpWidget(
+      MaterialApp(home: InventoryPage(repository: repository)),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField).first, 'a stick of butter');
+    await tester.tap(find.text('Check before I shop'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('I’ll skip this'));
+    await tester.pumpAndSettle();
+
+    expect(repository.avoidedPurchases, hasLength(1));
+    expect(repository.avoidedPurchases.single.item.name, 'butter');
+    expect(
+      find.text('Great choice — all duplicate purchases were removed.'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('purchase avoided!'), findsOneWidget);
+    final shoppingField =
+        tester.widget<TextField>(find.byType(TextField).first);
+    expect(shoppingField.controller!.text, isEmpty);
+  });
 }
 
 class _FakeInventoryRepository implements InventoryRepository {
   final items = <InventoryItem>[];
   final deletedIds = <int>[];
+  final avoidedPurchases = <ShoppingSuggestion>[];
   var _nextId = 1;
 
   @override
@@ -102,5 +168,10 @@ class _FakeInventoryRepository implements InventoryRepository {
   Future<void> deleteItem(int id) async {
     deletedIds.add(id);
     items.removeWhere((item) => item.id == id);
+  }
+
+  @override
+  Future<void> recordAvoidedPurchase(ShoppingSuggestion suggestion) async {
+    avoidedPurchases.add(suggestion);
   }
 }

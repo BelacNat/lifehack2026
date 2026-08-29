@@ -46,4 +46,33 @@ void main() {
     expect(result.suggestions.single.message, contains('1 ml of milk'));
     expect(result.suggestions.single.message, isNot(contains('carton')));
   });
+
+  test('matches packaging descriptions across different measurements', () {
+    final result = checker.check(
+      'a stick of butter',
+      const [
+        InventoryItem(
+          name: 'Butter',
+          quantity: 250,
+          measurement: ItemMeasurement.weight,
+        ),
+      ],
+    );
+
+    expect(result.items.single.name, 'butter');
+    expect(result.suggestions, hasLength(1));
+    expect(result.suggestions.single.message, contains('250 g of Butter'));
+  });
+
+  test('matches number words, shopping verbs, and varied containers', () {
+    final result = checker.check(
+      'please get two jars of tomato sauce, pick up a loaf of bread',
+      const [
+        InventoryItem(name: 'tomato sauce', quantity: 1),
+        InventoryItem(name: 'bread', quantity: 1),
+      ],
+    );
+
+    expect(result.suggestions, hasLength(2));
+  });
 }

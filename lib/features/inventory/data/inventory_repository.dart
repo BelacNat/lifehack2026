@@ -1,10 +1,12 @@
 import '../../../core/supabase/supabase_client.dart';
 import '../domain/inventory_item.dart';
+import '../domain/shopping_list_checker.dart';
 
 abstract class InventoryRepository {
   Future<List<InventoryItem>> loadItems();
   Future<InventoryItem> addItem(InventoryItem item);
   Future<void> deleteItem(int id);
+  Future<void> recordAvoidedPurchase(ShoppingSuggestion suggestion);
 }
 
 class SupabaseInventoryRepository implements InventoryRepository {
@@ -39,6 +41,16 @@ class SupabaseInventoryRepository implements InventoryRepository {
   @override
   Future<void> deleteItem(int id) async {
     await supabase.from(_table).delete().eq('id', id);
+  }
+
+  @override
+  Future<void> recordAvoidedPurchase(ShoppingSuggestion suggestion) async {
+    await supabase.from('avoided_purchases').insert({
+      'inventory_item_id': suggestion.inventoryItem.id,
+      'item_name': suggestion.item.name,
+      'shopping_quantity': suggestion.item.quantity,
+      'shopping_unit': _unitFor(suggestion.item.measurement),
+    });
   }
 
   static InventoryItem _fromRow(Map<String, dynamic> row) {
