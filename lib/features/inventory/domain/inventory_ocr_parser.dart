@@ -44,27 +44,22 @@ class InventoryOcrParser {
   }
 
   String? _inventoryNameForLabel(String label) {
-    const supportedLabels = {
-      'apple': 'apple',
-      'banana': 'banana',
-      'orange': 'orange',
-      'lemon': 'lemon',
-      'pear': 'pear',
-      'pineapple': 'pineapple',
-      'strawberry': 'strawberry',
-      'tomato': 'tomato',
-      'potato': 'potato',
-      'carrot': 'carrot',
-      'broccoli': 'broccoli',
-      'bread': 'bread',
-      'egg': 'eggs',
-      'milk': 'milk',
-      'cheese': 'cheese',
-      'yogurt': 'yogurt',
-      'meat': 'meat',
-      'fish': 'fish',
+    final normalized = label.toLowerCase().trim();
+    if (normalized.length < 2 || normalized.length > 60) return null;
+    if (!RegExp(r"^[a-z][a-z '\-]*$").hasMatch(normalized)) return null;
+    const genericLabels = {
+      'food',
+      'fruit',
+      'vegetable',
+      'produce',
+      'ingredient',
+      'drink',
+      'beverage',
+      'container',
+      'packaging',
     };
-    return supportedLabels[label.toLowerCase().trim()];
+    if (genericLabels.contains(normalized)) return null;
+    return normalized;
   }
 
   InventoryItem _parseLine(String line, DateTime now) {

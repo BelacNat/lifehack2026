@@ -17,7 +17,6 @@ dependencies:
   image_picker: ^1.2.3
   # 0.16+ includes Apple Silicon simulator support for iOS 26.
   google_mlkit_text_recognition: ^0.16.0
-  google_mlkit_image_labeling: ^0.15.0
 
 dev_dependencies:
   flutter_test:

@@ -38,4 +38,14 @@ void main() {
     expect(items.map((item) => item.name), ['milk', 'apple']);
     expect(items.last.category, InventoryCategory.produce);
   });
+
+  test('accepts specific vision foods while filtering generic labels', () {
+    final items = parser.mergeImageLabels(
+      const [],
+      ['red delicious apple', 'Fruit', 'Food'],
+      today: today,
+    );
+
+    expect(items.map((item) => item.name), ['red delicious apple']);
+  });
 }
