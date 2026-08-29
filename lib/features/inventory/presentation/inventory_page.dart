@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../fridge/data/fridge_items_controller.dart';
+import '../../quests/data/quest_progress_store.dart';
 import '../data/inventory_repository.dart';
 import '../data/inventory_ocr_service.dart';
 import '../data/inventory_ocr_service_factory.dart';
@@ -118,8 +119,13 @@ class _InventoryPageState extends State<InventoryPage> {
         final saved = await _repository.addItem(added);
         if (!mounted) return;
         setState(() => _inventory.add(saved));
-        FridgeItemsController.refresh();
-        ScaffoldMessenger.of(context).showSnackBar(
+
+        await QuestProgressStore.recordFridgeActivityToday();
+
+        if (!mounted) return;
+
+FridgeItemsController.refresh();
+ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('${saved.name} added to your inventory.')),
         );
       } catch (_) {
@@ -217,7 +223,14 @@ class _InventoryPageState extends State<InventoryPage> {
     }
     if (!mounted) return;
     setState(() => _inventory.addAll(saved));
+    if (saved.isNotEmpty) {
+      await QuestProgressStore.recordFridgeActivityToday();
+    }
+
+    if (!mounted) return;
+
     FridgeItemsController.refresh();
+
     final failed = items.length - saved.length;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(

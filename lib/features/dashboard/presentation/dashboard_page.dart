@@ -293,10 +293,6 @@ class _Header extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final initials = summary.displayName.trim().isEmpty
-        ? '?'
-        : summary.displayName.trim().substring(0, 1).toUpperCase();
-
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
       child: Row(
@@ -331,10 +327,11 @@ class _Header extends StatelessWidget {
               radius: 22,
               backgroundColor: theme.colorScheme.primaryContainer,
               child: Text(
-                initials,
+                summary.avatarEmoji,
                 style: TextStyle(
                   color: theme.colorScheme.onPrimaryContainer,
                   fontWeight: FontWeight.w700,
+                  fontSize: 20,
                 ),
               ),
             ),

@@ -44,7 +44,7 @@ class _QuestsPageState extends State<QuestsPage>
       return LeaderboardEntry(
         userId: e.userId,
         displayName: me.displayName,
-        avatarEmoji: e.avatarEmoji,
+        avatarEmoji: me.avatarEmoji,
         township: me.township,
         weeklyPoints: me.weeklyPoints,
         monthlyPoints: me.monthlyPoints,

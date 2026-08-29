@@ -12,11 +12,20 @@ abstract class InventoryRepository {
 class SupabaseInventoryRepository implements InventoryRepository {
   static const _table = 'fridge_items';
 
+  String get _userId {
+    final userId = supabase.auth.currentUser?.id;
+    if (userId == null) {
+      throw StateError('A signed-in user is required for inventory access.');
+    }
+    return userId;
+  }
+
   @override
   Future<List<InventoryItem>> loadItems() async {
     final rows = await supabase
         .from(_table)
         .select('id, name, category, quantity, unit, expiry_date')
+        .eq('user_id', _userId)
         .isFilter('consumed_at', null)
         .order('added_at');
     return rows.map(_fromRow).toList();
@@ -32,6 +41,7 @@ class SupabaseInventoryRepository implements InventoryRepository {
           'quantity': item.quantity,
           'unit': _unitFor(item.measurement),
           'expiry_date': _dateOnly(item.expirationDate!),
+          'user_id': _userId,
         })
         .select('id, name, category, quantity, unit, expiry_date')
         .single();
@@ -40,12 +50,13 @@ class SupabaseInventoryRepository implements InventoryRepository {
 
   @override
   Future<void> deleteItem(int id) async {
-    await supabase.from(_table).delete().eq('id', id);
+    await supabase.from(_table).delete().eq('id', id).eq('user_id', _userId);
   }
 
   @override
   Future<void> recordAvoidedPurchase(ShoppingSuggestion suggestion) async {
     await supabase.from('avoided_purchases').insert({
+      'user_id': _userId,
       'inventory_item_id': suggestion.inventoryItem.id,
       'item_name': suggestion.item.name,
       'shopping_quantity': suggestion.item.quantity,

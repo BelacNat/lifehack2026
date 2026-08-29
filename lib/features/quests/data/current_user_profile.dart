@@ -9,6 +9,7 @@ class CurrentUserProfile {
   const CurrentUserProfile({
     required this.userId,
     required this.displayName,
+    required this.avatarEmoji,
     required this.township,
     required this.weeklyPoints,
     required this.monthlyPoints,
@@ -18,6 +19,7 @@ class CurrentUserProfile {
 
   final String userId;
   final String displayName;
+  final String avatarEmoji;
   final String township;
 
   /// Fresh accounts start at 0 and accumulate as points_ledger rows are
@@ -38,7 +40,7 @@ Future<CurrentUserProfile?> loadCurrentUserProfile() async {
 
   final profileRow = await supabase
       .from('profiles')
-      .select('display_name, residential_area, created_at')
+      .select('display_name, avatar_emoji, residential_area, created_at')
       .eq('id', userId)
       .maybeSingle();
   if (profileRow == null) return null;
@@ -67,6 +69,7 @@ Future<CurrentUserProfile?> loadCurrentUserProfile() async {
   return CurrentUserProfile(
     userId: userId,
     displayName: profileRow['display_name'] as String? ?? 'You',
+    avatarEmoji: profileRow['avatar_emoji'] as String? ?? '🙂',
     township: profileRow['residential_area'] as String? ?? 'Singapore',
     weeklyPoints: weeklyRow?['points'] as int? ?? 0,
     monthlyPoints: monthlyRow?['points'] as int? ?? 0,
