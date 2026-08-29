@@ -14,6 +14,10 @@ does not create or alter any tables, columns, policies, or migrations.
 - Recipe ingredients include AI-generated two-pax quantities
 - A pax selector scales recipe quantities from 1–8 people, capped by stock
 - Recipe completion subtracts only the scaled quantities from matched items
+- Opt-in browser notifications for newly expiring food
+- A user-selectable daily notification time, defaulting to 9:00 AM
+- One-minute expiry checks while the web app is open, with alerts sent only
+  during the selected minute and duplicates prevented through local preferences
 - Pull-to-refresh and database error handling
 - Automatic AI recipes using all safe, unconsumed food
 - Rescue-soon ingredients prioritized ahead of fresher food
