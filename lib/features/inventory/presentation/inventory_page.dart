@@ -15,7 +15,11 @@ class _InventoryPageState extends State<InventoryPage> {
   final _checker = ShoppingListChecker();
   final _inventory = <InventoryItem>[
     const InventoryItem(name: 'eggs', quantity: 6),
-    const InventoryItem(name: 'milk', quantity: 1, unit: 'carton'),
+    const InventoryItem(
+      name: 'milk',
+      quantity: 1,
+      measurement: ItemMeasurement.liquid,
+    ),
   ];
   ShoppingListResult? _result;
 
@@ -39,59 +43,18 @@ class _InventoryPageState extends State<InventoryPage> {
   }
 
   Future<void> _addInventoryItem() async {
-    final nameController = TextEditingController();
-    final quantityController = TextEditingController(text: '1');
     final added = await showDialog<InventoryItem>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Add what you have'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: nameController,
-              autofocus: true,
-              textCapitalization: TextCapitalization.sentences,
-              decoration: const InputDecoration(labelText: 'Item name'),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: quantityController,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
-              decoration: const InputDecoration(labelText: 'Quantity'),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () {
-              final quantity = double.tryParse(quantityController.text);
-              if (nameController.text.trim().isEmpty ||
-                  quantity == null ||
-                  quantity <= 0) {
-                return;
-              }
-              Navigator.pop(
-                context,
-                InventoryItem(
-                  name: nameController.text.trim().toLowerCase(),
-                  quantity: quantity,
-                ),
-              );
-            },
-            child: const Text('Add'),
-          ),
-        ],
-      ),
+      builder: (context) => const _AddInventoryItemDialog(),
     );
-    nameController.dispose();
-    quantityController.dispose();
-    if (added != null) setState(() => _inventory.add(added));
+    if (added != null) {
+      setState(() => _inventory.add(added));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('${added.name} added to your inventory.')),
+        );
+      }
+    }
   }
 
   @override
@@ -169,7 +132,10 @@ class _InventoryPageState extends State<InventoryPage> {
               final item = entry.value;
               return InputChip(
                 avatar: const Icon(Icons.kitchen_outlined, size: 18),
-                label: Text('${item.displayQuantity} ${item.name}'),
+                label: Text(
+                  '${item.displayDescription}'
+                  '${item.expirationDate == null ? '' : ' • expires ${item.expirationLabel}'}',
+                ),
                 onDeleted: () {
                   setState(() => _inventory.removeAt(entry.key));
                 },
@@ -182,6 +148,185 @@ class _InventoryPageState extends State<InventoryPage> {
           ],
         ],
       ),
+    );
+  }
+}
+
+class _AddInventoryItemDialog extends StatefulWidget {
+  const _AddInventoryItemDialog();
+
+  @override
+  State<_AddInventoryItemDialog> createState() =>
+      _AddInventoryItemDialogState();
+}
+
+class _AddInventoryItemDialogState extends State<_AddInventoryItemDialog> {
+  final _formKey = GlobalKey<FormState>();
+  final _quantityController = TextEditingController(text: '1');
+  final _nameController = TextEditingController();
+  final _expirationController = TextEditingController();
+  ItemMeasurement _measurement = ItemMeasurement.count;
+  DateTime? _expirationDate;
+
+  @override
+  void dispose() {
+    _quantityController.dispose();
+    _nameController.dispose();
+    _expirationController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _pickExpirationDate() async {
+    final now = DateTime.now();
+    final selected = await showDatePicker(
+      context: context,
+      initialDate: _expirationDate ?? now.add(const Duration(days: 7)),
+      firstDate: DateTime(now.year, now.month, now.day),
+      lastDate: DateTime(now.year + 20),
+      helpText: 'Select expiration date',
+    );
+    if (selected == null) return;
+    setState(() {
+      _expirationDate = selected;
+      _expirationController.text = '${selected.day.toString().padLeft(2, '0')}/'
+          '${selected.month.toString().padLeft(2, '0')}/${selected.year}';
+    });
+  }
+
+  void _save() {
+    if (!_formKey.currentState!.validate()) return;
+    Navigator.pop(
+      context,
+      InventoryItem(
+        name: _nameController.text.trim().toLowerCase(),
+        quantity: double.parse(_quantityController.text),
+        measurement: _measurement,
+        expirationDate: _expirationDate,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      icon: const Icon(Icons.add_home_outlined),
+      title: const Text('Add to home inventory'),
+      content: SingleChildScrollView(
+        child: Form(
+          key: _formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Tell us what you already have so we can help you avoid buying duplicates.',
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
+              const SizedBox(height: 20),
+              TextFormField(
+                controller: _quantityController,
+                autofocus: true,
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+                textInputAction: TextInputAction.next,
+                decoration: InputDecoration(
+                  labelText: _measurement == ItemMeasurement.count
+                      ? 'Number of items'
+                      : _measurement == ItemMeasurement.weight
+                          ? 'Weight in grams'
+                          : 'Volume in millilitres',
+                  hintText: _measurement == ItemMeasurement.count
+                      ? 'e.g. 2'
+                      : 'e.g. 500',
+                  prefixIcon: const Icon(Icons.numbers),
+                  border: const OutlineInputBorder(),
+                ),
+                validator: (value) {
+                  final quantity = double.tryParse(value ?? '');
+                  if (quantity == null || quantity <= 0) {
+                    return 'Enter a number greater than 0';
+                  }
+                  return null;
+                },
+              ),
+              const SizedBox(height: 16),
+              DropdownButtonFormField<ItemMeasurement>(
+                key: const Key('measurement-type-field'),
+                initialValue: _measurement,
+                decoration: const InputDecoration(
+                  labelText: 'How is this item measured?',
+                  prefixIcon: Icon(Icons.straighten),
+                  border: OutlineInputBorder(),
+                ),
+                items: ItemMeasurement.values
+                    .map(
+                      (measurement) => DropdownMenuItem(
+                        value: measurement,
+                        child: Text(measurement.label),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (value) {
+                  if (value != null) setState(() => _measurement = value);
+                },
+              ),
+              const SizedBox(height: 16),
+              TextFormField(
+                controller: _nameController,
+                textCapitalization: TextCapitalization.sentences,
+                textInputAction: TextInputAction.done,
+                onFieldSubmitted: (_) => _save(),
+                decoration: const InputDecoration(
+                  labelText: 'Item name',
+                  hintText: 'e.g. milk',
+                  prefixIcon: Icon(Icons.local_grocery_store_outlined),
+                  border: OutlineInputBorder(),
+                ),
+                validator: (value) => value == null || value.trim().isEmpty
+                    ? 'Enter an item name'
+                    : null,
+              ),
+              const SizedBox(height: 16),
+              TextFormField(
+                controller: _expirationController,
+                readOnly: true,
+                onTap: _pickExpirationDate,
+                decoration: InputDecoration(
+                  labelText: 'Expiration date',
+                  hintText: 'Select a date',
+                  helperText: 'Required so we can remind you to use it in time',
+                  prefixIcon: const Icon(Icons.event_outlined),
+                  suffixIcon: _expirationDate == null
+                      ? const Icon(Icons.arrow_drop_down)
+                      : IconButton(
+                          tooltip: 'Clear expiration date',
+                          onPressed: () => setState(() {
+                            _expirationDate = null;
+                            _expirationController.clear();
+                          }),
+                          icon: const Icon(Icons.clear),
+                        ),
+                  border: const OutlineInputBorder(),
+                ),
+                validator: (_) => _expirationDate == null
+                    ? 'Select an expiration date'
+                    : null,
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton.icon(
+          onPressed: _save,
+          icon: const Icon(Icons.add),
+          label: const Text('Add to inventory'),
+        ),
+      ],
     );
   }
 }

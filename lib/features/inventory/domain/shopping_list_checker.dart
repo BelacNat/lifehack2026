@@ -24,11 +24,14 @@ class ShoppingListChecker {
     'boxes': 'box',
     'bottle': 'bottle',
     'bottles': 'bottle',
+    'jug': 'jug',
+    'jugs': 'jug',
     'can': 'can',
     'cans': 'can',
     'kg': 'kg',
     'g': 'g',
     'l': 'l',
+    'ml': 'ml',
     'litre': 'l',
     'litres': 'l',
     'pack': 'pack',
@@ -44,7 +47,8 @@ class ShoppingListChecker {
       homeByName[key] = InventoryItem(
         name: item.name,
         quantity: (existing?.quantity ?? 0) + item.quantity,
-        unit: item.unit,
+        measurement: item.measurement,
+        expirationDate: item.expirationDate,
       );
     }
 
@@ -52,12 +56,10 @@ class ShoppingListChecker {
     for (final wanted in parsed) {
       final atHome = homeByName[_normaliseName(wanted.name)];
       if (atHome == null || atHome.quantity <= 0) continue;
-      final compatibleUnits = wanted.unit.isEmpty ||
-          atHome.unit.isEmpty ||
-          wanted.unit == atHome.unit;
+      final compatibleUnits = wanted.measurement == atHome.measurement;
       if (!compatibleUnits) continue;
       final covered = atHome.quantity >= wanted.quantity;
-      final homeAmount = '${atHome.displayQuantity} ${atHome.name}'.trim();
+      final homeAmount = atHome.displayDescription;
       suggestions.add(ShoppingSuggestion(
         item: wanted,
         covered: covered,
@@ -77,19 +79,24 @@ class ShoppingListChecker {
         .where((e) => e.isNotEmpty);
     for (final entry in entries) {
       final match = RegExp(
-        r'^(?:(\d+(?:\.\d+)?)\s+)?(?:(cartons?|bags?|boxes?|bottles?|cans?|packs?|kg|g|l|litres?)\s+(?:of\s+)?)?(.+)$',
+        r'^(?:(\d+(?:\.\d+)?)\s+)?(?:(cartons?|bags?|boxes?|bottles?|jugs?|cans?|packs?|kg|g|ml|l|litres?)\s+(?:of\s+)?)?(.+)$',
         caseSensitive: false,
       ).firstMatch(entry);
       if (match == null) continue;
       final quantity = double.tryParse(match.group(1) ?? '') ?? 1;
       final unit = _units[(match.group(2) ?? '').toLowerCase()] ?? '';
+      final measurement = unit == 'g' || unit == 'kg'
+          ? ItemMeasurement.weight
+          : unit == 'ml' || unit == 'l'
+              ? ItemMeasurement.liquid
+              : ItemMeasurement.count;
       final name = _displayName(match.group(3)!.trim());
-      final key = '${_normaliseName(name)}|$unit';
+      final key = '${_normaliseName(name)}|$measurement';
       final existing = combined[key];
       combined[key] = InventoryItem(
         name: existing?.name ?? name,
         quantity: (existing?.quantity ?? 0) + quantity,
-        unit: unit,
+        measurement: measurement,
       );
     }
     return combined.values.toList();
