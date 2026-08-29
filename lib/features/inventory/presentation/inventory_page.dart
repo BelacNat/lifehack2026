@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 
+import '../data/inventory_repository.dart';
 import '../domain/inventory_item.dart';
 import '../domain/shopping_list_checker.dart';
 
 class InventoryPage extends StatefulWidget {
-  const InventoryPage({super.key});
+  const InventoryPage({super.key, this.repository});
+
+  final InventoryRepository? repository;
 
   @override
   State<InventoryPage> createState() => _InventoryPageState();
@@ -13,15 +16,42 @@ class InventoryPage extends StatefulWidget {
 class _InventoryPageState extends State<InventoryPage> {
   final _shoppingController = TextEditingController();
   final _checker = ShoppingListChecker();
-  final _inventory = <InventoryItem>[
-    const InventoryItem(name: 'eggs', quantity: 6),
-    const InventoryItem(
-      name: 'milk',
-      quantity: 1,
-      measurement: ItemMeasurement.liquid,
-    ),
-  ];
+  final _inventory = <InventoryItem>[];
+  late final InventoryRepository _repository;
+  bool _loadingInventory = true;
+  String? _inventoryError;
   ShoppingListResult? _result;
+
+  @override
+  void initState() {
+    super.initState();
+    _repository = widget.repository ?? SupabaseInventoryRepository();
+    _loadInventory();
+  }
+
+  Future<void> _loadInventory() async {
+    setState(() {
+      _loadingInventory = true;
+      _inventoryError = null;
+    });
+    try {
+      final items = await _repository.loadItems();
+      if (!mounted) return;
+      setState(() {
+        _inventory
+          ..clear()
+          ..addAll(items);
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _inventoryError =
+            'Couldn’t load your inventory. Check your connection and try again.';
+      });
+    } finally {
+      if (mounted) setState(() => _loadingInventory = false);
+    }
+  }
 
   @override
   void dispose() {
@@ -48,12 +78,41 @@ class _InventoryPageState extends State<InventoryPage> {
       builder: (context) => const _AddInventoryItemDialog(),
     );
     if (added != null) {
-      setState(() => _inventory.add(added));
-      if (mounted) {
+      try {
+        final saved = await _repository.addItem(added);
+        if (!mounted) return;
+        setState(() => _inventory.add(saved));
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('${added.name} added to your inventory.')),
+          SnackBar(content: Text('${saved.name} added to your inventory.')),
+        );
+      } catch (_) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Couldn’t save this item. Please try again.'),
+          ),
         );
       }
+    }
+  }
+
+  Future<void> _deleteInventoryItem(InventoryItem item) async {
+    final id = item.id;
+    if (id == null) return;
+    try {
+      await _repository.deleteItem(id);
+      if (!mounted) return;
+      setState(() => _inventory.remove(item));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('${item.name} removed from your inventory.')),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Couldn’t remove this item. Please try again.'),
+        ),
+      );
     }
   }
 
@@ -125,23 +184,43 @@ class _InventoryPageState extends State<InventoryPage> {
               ),
             ],
           ),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: _inventory.asMap().entries.map((entry) {
-              final item = entry.value;
-              return InputChip(
-                avatar: const Icon(Icons.kitchen_outlined, size: 18),
-                label: Text(
-                  '${item.displayDescription}'
-                  '${item.expirationDate == null ? '' : ' • expires ${item.expirationLabel}'}',
+          if (_loadingInventory)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 20),
+              child: Center(child: CircularProgressIndicator()),
+            )
+          else if (_inventoryError != null)
+            Card(
+              child: ListTile(
+                leading: const Icon(Icons.cloud_off_outlined),
+                title: Text(_inventoryError!),
+                trailing: IconButton(
+                  tooltip: 'Retry',
+                  onPressed: _loadInventory,
+                  icon: const Icon(Icons.refresh),
                 ),
-                onDeleted: () {
-                  setState(() => _inventory.removeAt(entry.key));
-                },
-              );
-            }).toList(),
-          ),
+              ),
+            )
+          else if (_inventory.isEmpty)
+            Text(
+              'Nothing here yet. Add your first item!',
+              style: Theme.of(context).textTheme.bodyMedium,
+            )
+          else
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: _inventory.map((item) {
+                return InputChip(
+                  avatar: const Icon(Icons.kitchen_outlined, size: 18),
+                  label: Text(
+                    '${item.displayDescription}'
+                    '${item.expirationDate == null ? '' : ' • expires ${item.expirationLabel}'}',
+                  ),
+                  onDeleted: () => _deleteInventoryItem(item),
+                );
+              }).toList(),
+            ),
           if (_result != null) ...[
             const SizedBox(height: 28),
             _ResultCard(result: _result!),

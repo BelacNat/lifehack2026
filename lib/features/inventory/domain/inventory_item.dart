@@ -11,12 +11,14 @@ enum ItemMeasurement {
 
 class InventoryItem {
   const InventoryItem({
+    this.id,
     required this.name,
     required this.quantity,
     this.measurement = ItemMeasurement.count,
     this.expirationDate,
   });
 
+  final int? id;
   final String name;
   final double quantity;
   final ItemMeasurement measurement;
