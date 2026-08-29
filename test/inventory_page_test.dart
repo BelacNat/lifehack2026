@@ -1,4 +1,5 @@
 import 'package:ecohabit/features/inventory/data/inventory_repository.dart';
+import 'package:ecohabit/features/inventory/data/inventory_ocr_service.dart';
 import 'package:ecohabit/features/inventory/domain/inventory_item.dart';
 import 'package:ecohabit/features/inventory/domain/shopping_list_checker.dart';
 import 'package:ecohabit/features/inventory/presentation/inventory_page.dart';
@@ -6,6 +7,37 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets('scans, reviews, and adds multiple inventory items',
+      (tester) async {
+    final repository = _FakeInventoryRepository();
+    final ocr = _FakeInventoryOcrService(
+      const InventoryRecognitionResult(
+        text: '500 ml Milk',
+        imageLabels: ['Apple'],
+      ),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: InventoryPage(repository: repository, ocrService: ocr),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Scan'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Choose from photos'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Review 2 detected items'), findsOneWidget);
+    expect(find.text('1 apple'), findsOneWidget);
+    expect(find.text('500 ml of milk'), findsOneWidget);
+    await tester.tap(find.text('Add selected (2)'));
+    await tester.pumpAndSettle();
+
+    expect(repository.items, hasLength(2));
+    expect(find.textContaining('2 items added'), findsOneWidget);
+  });
+
   testWidgets('adds an inventory item with its measurement', (tester) async {
     final repository = _FakeInventoryRepository();
     await tester.pumpWidget(
@@ -171,6 +203,21 @@ void main() {
     expect(shoppingField.controller!.text, 'whole milk');
     expect(find.textContaining('stays on your list'), findsOneWidget);
   });
+}
+
+class _FakeInventoryOcrService implements InventoryOcrService {
+  _FakeInventoryOcrService(this.result);
+
+  final InventoryRecognitionResult result;
+
+  @override
+  bool get isSupported => true;
+
+  @override
+  Future<InventoryRecognitionResult?> recognize(
+    InventoryImageSource source,
+  ) async =>
+      result;
 }
 
 class _FakeInventoryRepository implements InventoryRepository {
