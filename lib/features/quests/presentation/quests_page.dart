@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 
+import '../data/current_user_profile.dart';
 import '../data/friend_request_store.dart';
 import '../data/mock_leaderboard_data.dart';
 import '../data/quest_points_store.dart';
 import '../domain/leaderboard_entry.dart';
 import '../domain/leaderboard_filters.dart';
-import 'widgets/friend_requests_sheet.dart';
+import 'widgets/friends_tab.dart';
 import 'widgets/leaderboard_list.dart';
 import 'widgets/period_countdown.dart';
 import 'widgets/quests_tab.dart';
@@ -20,57 +21,95 @@ class QuestsPage extends StatefulWidget {
   State<QuestsPage> createState() => _QuestsPageState();
 }
 
-class _QuestsPageState extends State<QuestsPage> {
+class _QuestsPageState extends State<QuestsPage>
+    with SingleTickerProviderStateMixin {
   // TODO: replace mock data with real FoodUsageEvents once fridge AI
   // expiry scraping (Person 2) and Supabase persistence are wired up.
-  final List<LeaderboardEntry> _allEntries = loadMockLeaderboard();
+  final List<LeaderboardEntry> _mockEntries = loadMockLeaderboard();
+
+  late final TabController _tabController;
+  CurrentUserProfile? _me;
 
   LeaderboardScope _scope = LeaderboardScope.overall;
   LeaderboardPeriod _period = LeaderboardPeriod.weekly;
 
+  /// The mock leaderboard opponents, with the current user's own entry
+  /// replaced by their real signed-in profile (name, township, points) so
+  /// it matches the "Hey, {name}" identity shown on the Dashboard.
+  List<LeaderboardEntry> get _allEntries {
+    final me = _me;
+    if (me == null) return _mockEntries;
+    return _mockEntries.map((e) {
+      if (e.userId != currentUserId) return e;
+      return LeaderboardEntry(
+        userId: e.userId,
+        displayName: me.displayName,
+        avatarEmoji: e.avatarEmoji,
+        township: me.township,
+        weeklyPoints: me.weeklyPoints,
+        monthlyPoints: me.monthlyPoints,
+        itemsRescued: e.itemsRescued,
+        itemsWasted: e.itemsWasted,
+        lifetimePoints: me.lifetimePoints,
+        lastWeekRank: me.hasWeekOfHistory ? e.lastWeekRank : null,
+      );
+    }).toList();
+  }
+
   @override
   void initState() {
     super.initState();
+    _tabController = TabController(length: 3, vsync: this);
     QuestPointsStore.ensureLoaded();
+    loadCurrentUserProfile().then((profile) async {
+      if (profile == null) return;
+      // The fresh total already includes every point ever synced, so any
+      // locally-accumulated bonus from a prior session would double-count.
+      await QuestPointsStore.resetBonusFor(currentUserId);
+      if (!mounted) return;
+      setState(() => _me = profile);
+    });
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return DefaultTabController(
-      length: 2,
-      child: Scaffold(
-        appBar: AppBar(
-          actions: [
-            ValueListenableBuilder<Set<String>>(
-              valueListenable: FriendRequestStore.incomingRequestUserIds,
-              builder: (context, incoming, _) {
-                return IconButton(
-                  tooltip: 'Friend requests',
-                  onPressed: () =>
-                      showFriendRequestsSheet(context, _allEntries),
-                  icon: Badge(
+    return Scaffold(
+      appBar: AppBar(
+        toolbarHeight: 0,
+        bottom: TabBar(
+          controller: _tabController,
+          tabs: [
+            const Tab(icon: Icon(Icons.emoji_events), text: 'Leaderboard'),
+            const Tab(icon: Icon(Icons.checklist), text: 'Quests'),
+            Tab(
+              text: 'Friends',
+              icon: ValueListenableBuilder<Set<String>>(
+                valueListenable: FriendRequestStore.incomingRequestUserIds,
+                builder: (context, incoming, _) {
+                  return Badge(
                     isLabelVisible: incoming.isNotEmpty,
                     label: Text('${incoming.length}'),
-                    child: const Icon(Icons.person),
-                  ),
-                );
-              },
+                    child: const Icon(Icons.group),
+                  );
+                },
+              ),
             ),
-            const SizedBox(width: 4),
-          ],
-          bottom: const TabBar(
-            tabs: [
-              Tab(icon: Icon(Icons.emoji_events), text: 'Leaderboard'),
-              Tab(icon: Icon(Icons.checklist), text: 'Quests'),
-            ],
-          ),
-        ),
-        body: TabBarView(
-          children: [
-            _buildLeaderboardTab(context),
-            const QuestsTab(currentUserId: currentUserId),
           ],
         ),
+      ),
+      body: TabBarView(
+        controller: _tabController,
+        children: [
+          _buildLeaderboardTab(context),
+          const QuestsTab(currentUserId: currentUserId),
+          FriendsTab(entries: _allEntries),
+        ],
       ),
     );
   }
@@ -109,14 +148,15 @@ class _QuestsPageState extends State<QuestsPage> {
                 children: [
                   Expanded(
                     child: SegmentedButton<LeaderboardScope>(
+                      showSelectedIcon: false,
                       segments: [
                         const ButtonSegment(
                           value: LeaderboardScope.overall,
-                          label: Text('Overall'),
+                          label: _SegmentLabel('Overall'),
                         ),
                         ButtonSegment(
                           value: LeaderboardScope.township,
-                          label: Text(me.township),
+                          label: _SegmentLabel(me.township),
                         ),
                       ],
                       selected: {_scope},
@@ -127,14 +167,15 @@ class _QuestsPageState extends State<QuestsPage> {
                   const SizedBox(width: 8),
                   Expanded(
                     child: SegmentedButton<LeaderboardPeriod>(
+                      showSelectedIcon: false,
                       segments: const [
                         ButtonSegment(
                           value: LeaderboardPeriod.weekly,
-                          label: Text('Weekly'),
+                          label: _SegmentLabel('Weekly'),
                         ),
                         ButtonSegment(
                           value: LeaderboardPeriod.monthly,
-                          label: Text('Monthly'),
+                          label: _SegmentLabel('Monthly'),
                         ),
                       ],
                       selected: {_period},
@@ -157,6 +198,22 @@ class _QuestsPageState extends State<QuestsPage> {
   int _pointsFor(LeaderboardEntry entry) => _period == LeaderboardPeriod.weekly
       ? entry.weeklyPoints
       : entry.monthlyPoints;
+}
+
+/// Keeps segmented-button labels on a single line, shrinking to fit instead
+/// of wrapping (e.g. a long township name like "Ang Mo Kio").
+class _SegmentLabel extends StatelessWidget {
+  const _SegmentLabel(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return FittedBox(
+      fit: BoxFit.scaleDown,
+      child: Text(text, maxLines: 1, softWrap: false),
+    );
+  }
 }
 
 class _PointsRuleBanner extends StatelessWidget {

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../fridge/data/fridge_items_controller.dart';
 import '../data/inventory_repository.dart';
 import '../data/inventory_ocr_service.dart';
 import '../data/inventory_ocr_service_factory.dart';
@@ -30,6 +31,25 @@ class _InventoryPageState extends State<InventoryPage> {
   String? _inventoryError;
   ShoppingListResult? _result;
   ShoppingSuggestion? _savingAvoidance;
+  _SortOption _sortOption = _SortOption.nameAsc;
+
+  List<InventoryItem> get _sortedInventory {
+    final sorted = [..._inventory];
+    sorted.sort((a, b) {
+      switch (_sortOption.field) {
+        case _SortField.name:
+          return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+        case _SortField.category:
+          return a.category.label.compareTo(b.category.label);
+        case _SortField.expiry:
+          if (a.expirationDate == null && b.expirationDate == null) return 0;
+          if (a.expirationDate == null) return 1;
+          if (b.expirationDate == null) return -1;
+          return a.expirationDate!.compareTo(b.expirationDate!);
+      }
+    });
+    return _sortOption.ascending ? sorted : sorted.reversed.toList();
+  }
 
   @override
   void initState() {
@@ -37,6 +57,11 @@ class _InventoryPageState extends State<InventoryPage> {
     _repository = widget.repository ?? SupabaseInventoryRepository();
     _ocrService = widget.ocrService ?? createInventoryOcrService();
     _loadInventory();
+    // The Fridge page (or Dashboard) may change the same underlying data —
+    // e.g. "I ate this" consumes an item — so re-fetch whenever that shared
+    // signal fires, keeping this list, the Fridge, and the Dashboard's
+    // glance counts consistent.
+    FridgeItemsController.items.addListener(_loadInventory);
   }
 
   Future<void> _loadInventory() async {
@@ -65,6 +90,7 @@ class _InventoryPageState extends State<InventoryPage> {
 
   @override
   void dispose() {
+    FridgeItemsController.items.removeListener(_loadInventory);
     _shoppingController.dispose();
     super.dispose();
   }
@@ -92,6 +118,7 @@ class _InventoryPageState extends State<InventoryPage> {
         final saved = await _repository.addItem(added);
         if (!mounted) return;
         setState(() => _inventory.add(saved));
+        FridgeItemsController.refresh();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('${saved.name} added to your inventory.')),
         );
@@ -190,6 +217,7 @@ class _InventoryPageState extends State<InventoryPage> {
     }
     if (!mounted) return;
     setState(() => _inventory.addAll(saved));
+    FridgeItemsController.refresh();
     final failed = items.length - saved.length;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -209,6 +237,7 @@ class _InventoryPageState extends State<InventoryPage> {
       await _repository.deleteItem(id);
       if (!mounted) return;
       setState(() => _inventory.remove(item));
+      FridgeItemsController.refresh();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('${item.name} removed from your inventory.')),
       );
@@ -386,6 +415,27 @@ class _InventoryPageState extends State<InventoryPage> {
                   style: Theme.of(context).textTheme.titleLarge,
                 ),
               ),
+              PopupMenuButton<_SortOption>(
+                tooltip: 'Sort',
+                icon: const Icon(Icons.filter_list),
+                initialValue: _sortOption,
+                onSelected: (option) => setState(() => _sortOption = option),
+                itemBuilder: (context) => _SortOption.values
+                    .map((option) => PopupMenuItem(
+                          value: option,
+                          child: Row(
+                            children: [
+                              if (option == _sortOption)
+                                const Icon(Icons.check, size: 18)
+                              else
+                                const SizedBox(width: 18),
+                              const SizedBox(width: 8),
+                              Text(option.label),
+                            ],
+                          ),
+                        ))
+                    .toList(),
+              ),
               TextButton.icon(
                 onPressed: _scanningInventory ? null : _addInventoryItem,
                 icon: const Icon(Icons.add),
@@ -416,19 +466,16 @@ class _InventoryPageState extends State<InventoryPage> {
               style: Theme.of(context).textTheme.bodyMedium,
             )
           else
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: _inventory.map((item) {
-                return InputChip(
-                  avatar: const Icon(Icons.kitchen_outlined, size: 18),
-                  label: Text(
-                    '${item.displayDescription}'
-                    '${item.expirationDate == null ? '' : ' • expires ${item.expirationLabel}'}',
-                  ),
-                  onDeleted: () => _deleteInventoryItem(item),
-                );
-              }).toList(),
+            Column(
+              children: _sortedInventory
+                  .map((item) => Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: _InventoryItemCard(
+                          item: item,
+                          onDelete: () => _deleteInventoryItem(item),
+                        ),
+                      ))
+                  .toList(),
             ),
         ],
       ),
@@ -853,5 +900,111 @@ class _ResultCard extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+enum _SortField { name, category, expiry }
+
+enum _SortOption {
+  nameAsc('Name (A–Z)', _SortField.name, true),
+  nameDesc('Name (Z–A)', _SortField.name, false),
+  categoryAsc('Category (A–Z)', _SortField.category, true),
+  categoryDesc('Category (Z–A)', _SortField.category, false),
+  expiryAsc('Expiry (soonest first)', _SortField.expiry, true),
+  expiryDesc('Expiry (latest first)', _SortField.expiry, false);
+
+  const _SortOption(this.label, this.field, this.ascending);
+
+  final String label;
+  final _SortField field;
+  final bool ascending;
+}
+
+class _InventoryItemCard extends StatelessWidget {
+  const _InventoryItemCard({required this.item, required this.onDelete});
+
+  final InventoryItem item;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+
+    final subtitleParts = [
+      '${item.displayQuantity} · ${item.category.label}',
+      if (item.expirationDate != null) 'expires ${item.expirationLabel}',
+    ];
+
+    return Material(
+      color: colors.surfaceContainerHigh,
+      borderRadius: BorderRadius.circular(18),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Row(
+          children: [
+            Container(
+              width: 42,
+              height: 42,
+              decoration: BoxDecoration(
+                color: colors.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Icon(_categoryIcon(item.category), color: colors.primary),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    item.name,
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    subtitleParts.join(' · '),
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: colors.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            IconButton(
+              tooltip: 'Remove',
+              onPressed: onDelete,
+              icon: const Icon(Icons.delete_outline),
+              color: colors.onSurfaceVariant,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  static IconData _categoryIcon(InventoryCategory category) {
+    switch (category) {
+      case InventoryCategory.produce:
+        return Icons.eco_outlined;
+      case InventoryCategory.meat:
+      case InventoryCategory.seafood:
+        return Icons.egg_alt_outlined;
+      case InventoryCategory.dairy:
+      case InventoryCategory.beverage:
+        return Icons.local_drink_outlined;
+      case InventoryCategory.bakery:
+        return Icons.bakery_dining_outlined;
+      case InventoryCategory.pantry:
+        return Icons.rice_bowl_outlined;
+      case InventoryCategory.condiment:
+        return Icons.liquor_outlined;
+      case InventoryCategory.frozen:
+        return Icons.ac_unit_outlined;
+      case InventoryCategory.other:
+        return Icons.kitchen_outlined;
+    }
   }
 }

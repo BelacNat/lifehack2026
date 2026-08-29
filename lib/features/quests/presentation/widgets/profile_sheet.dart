@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 
-import '../../data/friend_request_store.dart';
 import '../../data/mock_leaderboard_data.dart';
 import '../../domain/leaderboard_entry.dart';
+import 'add_friend_button.dart';
 
 // Owner: Person 3 — Gamification
 Future<void> showProfileSheet(BuildContext context, LeaderboardEntry entry) {
@@ -63,7 +63,7 @@ class ProfileSheet extends StatelessWidget {
                 ),
                 if (entry.userId != currentUserId) ...[
                   const SizedBox(width: 8),
-                  _AddFriendButton(entry: entry),
+                  AddFriendButton(userId: entry.userId),
                 ],
               ],
             ),
@@ -97,40 +97,6 @@ class ProfileSheet extends StatelessWidget {
           ],
         ),
       ),
-    );
-  }
-}
-
-class _AddFriendButton extends StatelessWidget {
-  const _AddFriendButton({required this.entry});
-
-  final LeaderboardEntry entry;
-
-  @override
-  Widget build(BuildContext context) {
-    return ValueListenableBuilder<Set<String>>(
-      valueListenable: FriendRequestStore.friendUserIds,
-      builder: (context, friends, _) {
-        if (friends.contains(entry.userId)) {
-          return OutlinedButton.icon(
-            onPressed: null,
-            icon: const Icon(Icons.people),
-            label: const Text('Friend'),
-          );
-        }
-
-        return ValueListenableBuilder<Set<String>>(
-          valueListenable: FriendRequestStore.outgoingRequestUserIds,
-          builder: (context, requested, _) {
-            final isRequested = requested.contains(entry.userId);
-            return OutlinedButton.icon(
-              onPressed: () => FriendRequestStore.toggleRequest(entry.userId),
-              icon: Icon(isRequested ? Icons.check : Icons.person_add_alt_1),
-              label: Text(isRequested ? 'Requested' : 'Add friend'),
-            );
-          },
-        );
-      },
     );
   }
 }

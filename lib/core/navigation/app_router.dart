@@ -62,7 +62,10 @@ final GoRouter appRouter = GoRouter(
           routes: [
             GoRoute(
               path: '/fridge',
-              builder: (context, state) => const FridgePage(),
+              builder: (context, state) => FridgePage(
+                initialTab:
+                    state.uri.queryParameters['tab'] == 'recipes' ? 1 : 0,
+              ),
             ),
           ],
         ),

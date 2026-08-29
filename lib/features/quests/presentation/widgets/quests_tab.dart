@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../data/mock_quests_data.dart';
 import '../../data/quest_points_store.dart';
+import '../../data/quest_progress_store.dart';
 import '../../domain/quest.dart';
 import 'quest_card.dart';
 
@@ -38,6 +39,7 @@ class _QuestsTabState extends State<QuestsTab>
   @override
   void initState() {
     super.initState();
+    QuestProgressStore.ensureLoaded();
     QuestPointsStore.ensureLoaded().then((_) {
       if (!mounted) return;
       // Quests claimed in a previous session should already be gone —
@@ -59,32 +61,38 @@ class _QuestsTabState extends State<QuestsTab>
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    final quests = loadMockQuests();
 
-    return ValueListenableBuilder<Set<String>>(
-      valueListenable: QuestPointsStore.claimedQuestIds,
-      builder: (context, claimed, _) {
-        return ListView(
-          padding: const EdgeInsets.all(16),
-          children: quests.map((quest) {
-            final dismissed = _dismissedQuestIds.contains(quest.id);
-            return AnimatedOpacity(
-              key: ValueKey(quest.id),
-              opacity: dismissed ? 0 : 1,
-              duration: _fadeDuration,
-              child: AnimatedSize(
-                duration: _fadeDuration,
-                curve: Curves.easeInOut,
-                child: dismissed
-                    ? const SizedBox.shrink()
-                    : QuestCard(
-                        quest: quest,
-                        claimed: claimed.contains(quest.id),
-                        onClaim: () => _claim(quest),
-                      ),
-              ),
+    return ValueListenableBuilder<Map<String, int>>(
+      valueListenable: QuestProgressStore.counts,
+      builder: (context, progressCounts, _) {
+        final quests = loadMockQuests(progressCounts);
+
+        return ValueListenableBuilder<Set<String>>(
+          valueListenable: QuestPointsStore.claimedQuestIds,
+          builder: (context, claimed, _) {
+            return ListView(
+              padding: const EdgeInsets.all(16),
+              children: quests.map((quest) {
+                final dismissed = _dismissedQuestIds.contains(quest.id);
+                return AnimatedOpacity(
+                  key: ValueKey(quest.id),
+                  opacity: dismissed ? 0 : 1,
+                  duration: _fadeDuration,
+                  child: AnimatedSize(
+                    duration: _fadeDuration,
+                    curve: Curves.easeInOut,
+                    child: dismissed
+                        ? const SizedBox.shrink()
+                        : QuestCard(
+                            quest: quest,
+                            claimed: claimed.contains(quest.id),
+                            onClaim: () => _claim(quest),
+                          ),
+                  ),
+                );
+              }).toList(),
             );
-          }).toList(),
+          },
         );
       },
     );

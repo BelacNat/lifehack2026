@@ -2,7 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/supabase/supabase_client.dart';
+import '../../fridge/data/fridge_items_controller.dart';
+import '../../fridge/data/rescue_recipes_controller.dart';
+import '../../fridge/domain/fridge_item.dart';
+import '../../fridge/domain/recipe_suggestion.dart';
+import '../../fridge/presentation/widgets/recipe_detail_page.dart';
+import '../../fridge/presentation/widgets/recipe_image.dart';
 import 'dashboard_repository.dart';
+import 'dashboard_summary_controller.dart';
+import 'widgets/category_breakdown_page.dart';
 
 class DashboardPage extends StatefulWidget {
   const DashboardPage({super.key});
@@ -17,19 +25,6 @@ class _DashboardPageState extends State<DashboardPage> {
 
   bool _isInsightExpanded = false;
 
-  final List<_ExpiringItem> _expiringItems = const [
-    _ExpiringItem(name: 'Baby spinach', quantity: '1 bag, 120g', urgency: _Urgency.today, icon: Icons.eco),
-    _ExpiringItem(name: 'Greek yoghurt', quantity: '450g tub', urgency: _Urgency.today, icon: Icons.icecream_outlined),
-    _ExpiringItem(name: 'Vine tomatoes', quantity: '6 pcs', urgency: _Urgency.soon, icon: Icons.circle_outlined),
-    _ExpiringItem(name: 'Chicken thigh', quantity: '500g pack', urgency: _Urgency.fresh, icon: Icons.kitchen_outlined),
-  ];
-
-  final List<_RecipePreview> _recipes = const [
-    _RecipePreview(name: 'Spinach and tomato shakshuka', usesCount: 3, matchPercent: 92),
-    _RecipePreview(name: 'Yoghurt-marinated grilled chicken', usesCount: 2, matchPercent: 78),
-    _RecipePreview(name: 'Roast tomato and herb pasta', usesCount: 1, matchPercent: 65),
-  ];
-
   final List<_ShoppingTip> _extraShoppingTips = const [
     _ShoppingTip(name: 'Rolled oats', action: _TipAction.buy),
     _ShoppingTip(name: 'Bell peppers', action: _TipAction.buy),
@@ -40,17 +35,50 @@ class _DashboardPageState extends State<DashboardPage> {
   void initState() {
     super.initState();
     _summaryFuture = _repository.fetchSummary();
+    RescueRecipesController.ensureLoaded();
+    FridgeItemsController.ensureLoaded();
+    DashboardSummaryController.refreshTrigger.addListener(_refreshSummary);
   }
 
-  void _goToInventory() => context.go('/inventory');
+  @override
+  void dispose() {
+    DashboardSummaryController.refreshTrigger.removeListener(_refreshSummary);
+    super.dispose();
+  }
+
+  void _refreshSummary() {
+    if (!mounted) return;
+    setState(() {
+      _summaryFuture = _repository.fetchSummary();
+    });
+  }
+
+  /// Items expiring today or within 3 days, soonest first — matches what
+  /// the Fridge page's "Expiring soon" tab shows.
+  List<FridgeItem> _soonItems(List<FridgeItem> fridgeItems) {
+    final now = DateTime.now();
+    final soon = fridgeItems.where((item) {
+      if (item.isConsumed) return false;
+      final status = item.statusAt(now);
+      return status == FridgeItemStatus.today ||
+          status == FridgeItemStatus.soon;
+    }).toList();
+
+    soon.sort((a, b) {
+      final aDays = a.daysRemainingAt(now) ?? 999;
+      final bDays = b.daysRemainingAt(now) ?? 999;
+      return aDays.compareTo(bDays);
+    });
+    return soon;
+  }
 
   void _goToFridge() => context.go('/fridge');
+
+  void _goToRescueRecipes() => context.go('/fridge?tab=recipes');
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final expiringToday =
-        _expiringItems.where((item) => item.urgency == _Urgency.today).length;
 
     return Scaffold(
       body: SafeArea(
@@ -71,66 +99,111 @@ class _DashboardPageState extends State<DashboardPage> {
 
             final summary = snapshot.data!;
 
-            return CustomScrollView(
-              slivers: [
-                SliverToBoxAdapter(
-                  child: _Header(theme: theme, summary: summary),
-                ),
-                SliverToBoxAdapter(
-                  child: _StreakCard(
-                    theme: theme,
-                    streakDays: summary.streakDays,
-                    bestStreak: summary.bestStreak,
-                    points: summary.points,
-                  ),
-                ),
-                SliverToBoxAdapter(
-                  child: _SectionHeader(
-                    title: 'Use these soon',
-                    actionLabel: 'See fridge',
-                    onAction: _goToFridge,
-                  ),
-                ),
-                SliverToBoxAdapter(
-                  child: _ExpiringShelf(items: _expiringItems, theme: theme),
-                ),
-                SliverToBoxAdapter(
-                  child: _SectionHeader(
-                    title: 'Fridge at a glance',
-                    actionLabel: '${_expiringItems.length} items',
-                  ),
-                ),
-                SliverToBoxAdapter(
-                  child: _GlanceGrid(
-                    theme: theme,
-                    expiringTodayCount: expiringToday,
-                  ),
-                ),
-                SliverToBoxAdapter(
-                  child: _AiInsightBanner(
-                    theme: theme,
-                    isExpanded: _isInsightExpanded,
-                    extraTips: _extraShoppingTips,
-                    onToggle: () =>
-                        setState(() => _isInsightExpanded = !_isInsightExpanded),
-                  ),
-                ),
-                SliverToBoxAdapter(
-                  child: _SectionHeader(
-                    title: 'Cook with what you have',
-                    actionLabel: 'More recipes',
-                    onAction: _goToInventory,
-                  ),
-                ),
-                SliverToBoxAdapter(
-                  child: _RecipeRow(
-                    recipes: _recipes,
-                    theme: theme,
-                    onRecipeTap: _goToInventory,
-                  ),
-                ),
-                const SliverToBoxAdapter(child: SizedBox(height: 24)),
-              ],
+            return ValueListenableBuilder<List<FridgeItem>>(
+              valueListenable: FridgeItemsController.items,
+              builder: (context, fridgeItems, _) {
+                final soonItems = _soonItems(fridgeItems);
+                final expiringToday = soonItems
+                    .where((item) =>
+                        item.statusAt(DateTime.now()) == FridgeItemStatus.today)
+                    .length;
+                final activeItems =
+                    fridgeItems.where((item) => !item.isConsumed).toList();
+                final produceCount = activeItems
+                    .where((item) => item.category == 'produce')
+                    .length;
+                final meatAndDairyCount = activeItems
+                    .where((item) =>
+                        item.category == 'meat' || item.category == 'dairy')
+                    .length;
+                final pantryAndOtherCount =
+                    activeItems.length - produceCount - meatAndDairyCount;
+                final distinctCategoryCount =
+                    activeItems.map((item) => item.category).toSet().length;
+
+                return CustomScrollView(
+                  slivers: [
+                    SliverToBoxAdapter(
+                      child: _Header(theme: theme, summary: summary),
+                    ),
+                    SliverToBoxAdapter(
+                      child: _StreakCard(
+                        theme: theme,
+                        streakDays: summary.streakDays,
+                        bestStreak: summary.bestStreak,
+                        points: summary.points,
+                      ),
+                    ),
+                    SliverToBoxAdapter(
+                      child: _SectionHeader(
+                        title: 'Use these soon',
+                        actionLabel: 'See fridge',
+                        onAction: _goToFridge,
+                      ),
+                    ),
+                    SliverToBoxAdapter(
+                      child: _ExpiringShelf(items: soonItems, theme: theme),
+                    ),
+                    SliverToBoxAdapter(
+                      child: _SectionHeader(
+                        title: 'Fridge at a glance',
+                        actionLabel: '$distinctCategoryCount categories',
+                        onAction: () => Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (context) =>
+                                CategoryBreakdownPage(items: fridgeItems),
+                          ),
+                        ),
+                      ),
+                    ),
+                    SliverToBoxAdapter(
+                      child: _GlanceGrid(
+                        theme: theme,
+                        produceCount: produceCount,
+                        meatAndDairyCount: meatAndDairyCount,
+                        pantryAndOtherCount: pantryAndOtherCount,
+                        expiringTodayCount: expiringToday,
+                      ),
+                    ),
+                    const SliverToBoxAdapter(child: SizedBox(height: 10)),
+                    SliverToBoxAdapter(
+                      child: _AiInsightBanner(
+                        theme: theme,
+                        isExpanded: _isInsightExpanded,
+                        extraTips: _extraShoppingTips,
+                        onToggle: () => setState(
+                            () => _isInsightExpanded = !_isInsightExpanded),
+                      ),
+                    ),
+                    SliverToBoxAdapter(
+                      child: _SectionHeader(
+                        title: 'Cook with what you have',
+                        actionLabel: 'More recipes',
+                        onAction: _goToRescueRecipes,
+                        topPadding: 12,
+                      ),
+                    ),
+                    SliverToBoxAdapter(
+                      child: ValueListenableBuilder<List<RecipeSuggestion>>(
+                        valueListenable: RescueRecipesController.recipes,
+                        builder: (context, recipes, _) {
+                          return _RecipeRow(
+                            recipes: recipes,
+                            theme: theme,
+                            onRecipeTap: (recipe) => Navigator.of(context).push(
+                              MaterialPageRoute<void>(
+                                builder: (context) =>
+                                    RecipeDetailPage(recipe: recipe),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                    const SliverToBoxAdapter(child: SizedBox(height: 24)),
+                  ],
+                );
+              },
             );
           },
         ),
@@ -167,46 +240,42 @@ class _DashboardError extends StatelessWidget {
   }
 }
 
-enum _Urgency { today, soon, fresh }
-
 enum _TipAction { buy, skip }
 
-class _ExpiringItem {
-  const _ExpiringItem({
-    required this.name,
-    required this.quantity,
-    required this.urgency,
-    required this.icon,
-  });
-
-  final String name;
-  final String quantity;
-  final _Urgency urgency;
-  final IconData icon;
-
-  String get daysLabel => switch (urgency) {
-        _Urgency.today => 'Expires today',
-        _Urgency.soon => '2 days left',
-        _Urgency.fresh => '5 days left',
-      };
-
-  Color urgencyColor(ColorScheme scheme) => switch (urgency) {
-        _Urgency.today => scheme.error,
-        _Urgency.soon => Colors.orange.shade700,
-        _Urgency.fresh => Colors.green.shade600,
-      };
+// Urgency coloring shared with the Fridge page: 1 day (or less) left is
+// red, 2 days left is yellow, 3+ days left is green.
+Color _urgencyColor(FridgeItem item, ColorScheme scheme) {
+  final days = item.daysRemainingAt(DateTime.now()) ?? 99;
+  if (days <= 1) return scheme.error;
+  if (days == 2) return Colors.orange.shade700;
+  return Colors.green.shade600;
 }
 
-class _RecipePreview {
-  const _RecipePreview({
-    required this.name,
-    required this.usesCount,
-    required this.matchPercent,
-  });
+String _urgencyLabel(FridgeItem item) {
+  final days = item.daysRemainingAt(DateTime.now()) ?? 0;
+  if (days <= 0) return 'Expires today';
+  return '$days day${days == 1 ? '' : 's'} left';
+}
 
-  final String name;
-  final int usesCount;
-  final int matchPercent;
+IconData _categoryIcon(String category) {
+  switch (category) {
+    case 'produce':
+      return Icons.eco_outlined;
+    case 'meat':
+    case 'seafood':
+      return Icons.egg_alt_outlined;
+    case 'dairy':
+    case 'beverage':
+      return Icons.local_drink_outlined;
+    case 'bakery':
+      return Icons.bakery_dining_outlined;
+    case 'pantry':
+      return Icons.rice_bowl_outlined;
+    case 'frozen':
+      return Icons.ac_unit_outlined;
+    default:
+      return Icons.kitchen_outlined;
+  }
 }
 
 class _ShoppingTip {
@@ -411,18 +480,20 @@ class _SectionHeader extends StatelessWidget {
     required this.title,
     required this.actionLabel,
     this.onAction,
+    this.topPadding = 24,
   });
 
   final String title;
   final String actionLabel;
   final VoidCallback? onAction;
+  final double topPadding;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 24, 20, 10),
+      padding: EdgeInsets.fromLTRB(20, topPadding, 20, 10),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
@@ -464,12 +535,24 @@ class _SectionHeader extends StatelessWidget {
 class _ExpiringShelf extends StatelessWidget {
   const _ExpiringShelf({required this.items, required this.theme});
 
-  final List<_ExpiringItem> items;
+  final List<FridgeItem> items;
   final ThemeData theme;
 
   @override
   Widget build(BuildContext context) {
     final scheme = theme.colorScheme;
+
+    if (items.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        child: Text(
+          'Nothing expiring soon — your fridge is on track.',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: scheme.onSurfaceVariant,
+          ),
+        ),
+      );
+    }
 
     return SizedBox(
       height: 152,
@@ -480,7 +563,10 @@ class _ExpiringShelf extends StatelessWidget {
         separatorBuilder: (_, __) => const SizedBox(width: 10),
         itemBuilder: (context, index) {
           final item = items[index];
-          final color = item.urgencyColor(scheme);
+          final color = _urgencyColor(item, scheme);
+          final quantity = item.quantity == item.quantity.roundToDouble()
+              ? item.quantity.toInt().toString()
+              : item.quantity.toStringAsFixed(1);
 
           return Container(
             width: 132,
@@ -500,7 +586,8 @@ class _ExpiringShelf extends StatelessWidget {
                     color: color.withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(9),
                   ),
-                  child: Icon(item.icon, size: 16, color: color),
+                  child: Icon(_categoryIcon(item.category),
+                      size: 16, color: color),
                 ),
                 const SizedBox(height: 10),
                 Text(
@@ -513,7 +600,7 @@ class _ExpiringShelf extends StatelessWidget {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  item.quantity,
+                  '$quantity ${item.unit}',
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: scheme.onSurfaceVariant,
                   ),
@@ -529,7 +616,7 @@ class _ExpiringShelf extends StatelessWidget {
                     borderRadius: BorderRadius.circular(6),
                   ),
                   child: Text(
-                    item.daysLabel,
+                    _urgencyLabel(item),
                     style: theme.textTheme.labelSmall
                         ?.copyWith(color: color, fontWeight: FontWeight.w600),
                   ),
@@ -544,9 +631,18 @@ class _ExpiringShelf extends StatelessWidget {
 }
 
 class _GlanceGrid extends StatelessWidget {
-  const _GlanceGrid({required this.theme, required this.expiringTodayCount});
+  const _GlanceGrid({
+    required this.theme,
+    required this.produceCount,
+    required this.meatAndDairyCount,
+    required this.pantryAndOtherCount,
+    required this.expiringTodayCount,
+  });
 
   final ThemeData theme;
+  final int produceCount;
+  final int meatAndDairyCount;
+  final int pantryAndOtherCount;
   final int expiringTodayCount;
 
   @override
@@ -554,15 +650,19 @@ class _GlanceGrid extends StatelessWidget {
     final scheme = theme.colorScheme;
 
     final tiles = [
-      _GlanceTile(icon: Icons.eco_outlined, number: 6, label: 'Fresh produce'),
+      _GlanceTile(
+        icon: Icons.eco_outlined,
+        number: produceCount,
+        label: 'Fresh produce',
+      ),
       _GlanceTile(
         icon: Icons.kitchen_outlined,
-        number: 3,
+        number: meatAndDairyCount,
         label: 'Meat and dairy',
       ),
       _GlanceTile(
         icon: Icons.inventory_2_outlined,
-        number: 5,
+        number: pantryAndOtherCount,
         label: 'Pantry and other',
       ),
       _GlanceTile(
@@ -583,7 +683,8 @@ class _GlanceGrid extends StatelessWidget {
         crossAxisSpacing: 10,
         childAspectRatio: 1.4,
         children: tiles
-            .map((tile) => _GlanceCard(tile: tile, scheme: scheme, theme: theme))
+            .map(
+                (tile) => _GlanceCard(tile: tile, scheme: scheme, theme: theme))
             .toList(),
       ),
     );
@@ -834,16 +935,28 @@ class _RecipeRow extends StatelessWidget {
     required this.onRecipeTap,
   });
 
-  final List<_RecipePreview> recipes;
+  final List<RecipeSuggestion> recipes;
   final ThemeData theme;
-  final VoidCallback onRecipeTap;
+  final ValueChanged<RecipeSuggestion> onRecipeTap;
 
   @override
   Widget build(BuildContext context) {
     final scheme = theme.colorScheme;
 
+    if (recipes.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        child: Text(
+          'Rescue recipes will appear here once your fridge has items to cook with.',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: scheme.onSurfaceVariant,
+          ),
+        ),
+      );
+    }
+
     return SizedBox(
-      height: 176,
+      height: 180,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -853,7 +966,7 @@ class _RecipeRow extends StatelessWidget {
           final recipe = recipes[index];
 
           return InkWell(
-            onTap: onRecipeTap,
+            onTap: () => onRecipeTap(recipe),
             borderRadius: BorderRadius.circular(16),
             child: Container(
               width: 188,
@@ -865,17 +978,24 @@ class _RecipeRow extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Container(
+                  SizedBox(
                     height: 96,
                     width: double.infinity,
-                    color: scheme.surfaceContainerHighest,
                     child: Stack(
+                      fit: StackFit.expand,
                       children: [
-                        Center(
-                          child: Icon(
-                            Icons.restaurant_menu,
-                            size: 30,
-                            color: scheme.onSurfaceVariant.withValues(alpha: 0.5),
+                        RecipeImage(
+                          recipeTitle: recipe.title,
+                          fallback: Container(
+                            color: scheme.surfaceContainerHighest,
+                            child: Center(
+                              child: Icon(
+                                Icons.restaurant_menu,
+                                size: 30,
+                                color: scheme.onSurfaceVariant
+                                    .withValues(alpha: 0.5),
+                              ),
+                            ),
                           ),
                         ),
                         Positioned(
@@ -889,7 +1009,7 @@ class _RecipeRow extends StatelessWidget {
                               borderRadius: BorderRadius.circular(7),
                             ),
                             child: Text(
-                              '${recipe.matchPercent}% match',
+                              '${recipe.timeMinutes} min',
                               style: theme.textTheme.labelSmall?.copyWith(
                                 color: Colors.green.shade700,
                                 fontWeight: FontWeight.w600,
@@ -906,7 +1026,7 @@ class _RecipeRow extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          recipe.name,
+                          recipe.title,
                           style: theme.textTheme.bodyMedium
                               ?.copyWith(fontWeight: FontWeight.w700),
                           maxLines: 2,
@@ -921,7 +1041,7 @@ class _RecipeRow extends StatelessWidget {
                             children: [
                               const TextSpan(text: 'Uses '),
                               TextSpan(
-                                text: '${recipe.usesCount}',
+                                text: '${recipe.ingredientsUsed.length}',
                                 style: TextStyle(
                                   color: scheme.error,
                                   fontWeight: FontWeight.w700,

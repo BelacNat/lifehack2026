@@ -107,7 +107,8 @@ void main() {
     await tester.tap(find.text('Add to inventory'));
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('2 ml of juice'), findsOneWidget);
+    expect(find.text('juice'), findsOneWidget);
+    expect(find.textContaining('2 ml'), findsOneWidget);
     expect(repository.items.single.name, 'juice');
     expect(repository.items.single.category, InventoryCategory.beverage);
   });
@@ -127,11 +128,11 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    tester.widget<InputChip>(find.byType(InputChip)).onDeleted!();
+    await tester.tap(find.byIcon(Icons.delete_outline));
     await tester.pumpAndSettle();
 
     expect(repository.deletedIds, [7]);
-    expect(find.textContaining('2 apples'), findsNothing);
+    expect(find.text('apples'), findsNothing);
   });
 
   testWidgets('shows a description warning directly below the check button',
@@ -191,8 +192,10 @@ void main() {
       find.byKey(const Key('shopping-list-text-field')),
       'a stick of butter',
     );
+    await tester.ensureVisible(find.text('Check before I shop'));
     await tester.tap(find.text('Check before I shop'));
     await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('I’ll skip this'));
     await tester.tap(find.text('I’ll skip this'));
     await tester.pumpAndSettle();
 
@@ -232,10 +235,12 @@ void main() {
       find.byKey(const Key('shopping-list-text-field')),
       'whole milk',
     );
+    await tester.ensureVisible(find.text('Check before I shop'));
     await tester.tap(find.text('Check before I shop'));
     await tester.pumpAndSettle();
 
     expect(find.textContaining('Possible duplicate'), findsOneWidget);
+    await tester.ensureVisible(find.text('Ignore warning'));
     await tester.tap(find.text('Ignore warning'));
     await tester.pumpAndSettle();
 

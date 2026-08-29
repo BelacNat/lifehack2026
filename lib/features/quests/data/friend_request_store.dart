@@ -1,5 +1,7 @@
 import 'package:flutter/foundation.dart';
 
+import 'quest_progress_store.dart';
+
 // Owner: Person 3 — Gamification
 //
 // In-memory stand-in for a real friends/social backend. Tracks outgoing
@@ -29,9 +31,10 @@ class FriendRequestStore {
   /// Sends a request if none is pending, or withdraws it if one already is.
   static void toggleRequest(String userId) {
     final current = outgoingRequestUserIds.value;
-    outgoingRequestUserIds.value = current.contains(userId)
-        ? ({...current}..remove(userId))
-        : {...current, userId};
+    final wasRequested = current.contains(userId);
+    outgoingRequestUserIds.value =
+        wasRequested ? ({...current}..remove(userId)) : {...current, userId};
+    if (!wasRequested) QuestProgressStore.recordFriendRequestSent();
   }
 
   static void acceptIncoming(String userId) {

@@ -3,25 +3,26 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../dashboard/presentation/dashboard_summary_controller.dart';
+import '../../quests/data/mock_leaderboard_data.dart' show currentUserId;
+import '../../quests/data/points_service.dart';
+import '../../quests/data/quest_points_store.dart';
+import '../../quests/data/quest_progress_store.dart';
+import '../../quests/data/streak_service.dart';
+import '../../quests/domain/points_calculator.dart';
 import '../data/expiry_notification_service.dart';
+import '../data/fridge_items_controller.dart';
 import '../data/fridge_repository.dart';
 import '../data/openai_recipe_service.dart';
+import '../data/rescue_recipes_controller.dart';
 import '../domain/fridge_item.dart';
 import '../domain/recipe_suggestion.dart';
+import 'widgets/recipe_detail_page.dart';
+import 'widgets/recipe_image.dart';
 
 String _categoryLabel(String category) {
   if (category.isEmpty) return 'Other';
   return '${category[0].toUpperCase()}${category.substring(1)}';
-}
-
-String _normalizeIngredientName(String value) {
-  return value.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
-}
-
-String _formatQuantity(double quantity) {
-  return quantity == quantity.roundToDouble()
-      ? quantity.toInt().toString()
-      : quantity.toStringAsFixed(1);
 }
 
 class FridgePage extends StatefulWidget {
@@ -29,10 +30,14 @@ class FridgePage extends StatefulWidget {
     super.key,
     this.recipeService,
     this.fridgeRepository,
+    this.initialTab = 0,
   });
 
   final RecipeSuggestionService? recipeService;
   final FridgeRepository? fridgeRepository;
+
+  /// 0 = Expiring soon, 1 = Rescue recipes.
+  final int initialTab;
 
   @override
   State<FridgePage> createState() => _FridgePageState();
@@ -47,9 +52,15 @@ class _FridgePageState extends State<FridgePage> {
   late final FridgeRepository _fridgeRepository;
   final ExpiryNotificationService _notificationService =
       const ExpiryNotificationService();
+  final PointsService _pointsService = const PointsService();
+  final StreakService _streakService = const StreakService();
   final SharedPreferencesAsync _preferences = SharedPreferencesAsync();
   Timer? _expiryCheckTimer;
   List<FridgeItem> _items = const [];
+  // Edge-detection for the streak bump: true once the current "everything
+  // expiring today is cleared" state has already been counted, so it isn't
+  // re-counted on every reload — reset the moment a new today-item appears.
+  bool _streakCountedForCurrentClear = false;
 
   List<RecipeSuggestion> _recipes = const [];
   String? _loadError;
@@ -194,6 +205,7 @@ class _FridgePageState extends State<FridgePage> {
 
     try {
       final items = await _fridgeRepository.fetchItems();
+      FridgeItemsController.items.value = items;
       if (!mounted) return;
 
       setState(() {
@@ -201,6 +213,8 @@ class _FridgePageState extends State<FridgePage> {
         _isLoading = false;
       });
       await _notifyNewExpiringItems(items);
+      await _maybeBumpStreak();
+      unawaited(QuestProgressStore.recordFridgeActivityToday());
       if (refreshRecipes) await _generateRecipes();
     } catch (_) {
       if (!mounted) return;
@@ -254,6 +268,36 @@ class _FridgePageState extends State<FridgePage> {
     return ingredients;
   }
 
+  /// True once nothing expiring today remains unconsumed — the day's
+  /// zero-waste streak condition.
+  bool get _allUrgentItemsCleared {
+    final now = DateTime.now();
+    return !_items.any((item) {
+      if (item.isConsumed) return false;
+      return item.statusAt(now) == FridgeItemStatus.today;
+    });
+  }
+
+  /// Bumps the streak every time the "everything expiring today is
+  /// cleared" state is freshly reached — not just once per calendar day —
+  /// so re-populating today's queue and clearing it again counts again.
+  Future<void> _maybeBumpStreak() async {
+    if (!_allUrgentItemsCleared) {
+      _streakCountedForCurrentClear = false;
+      return;
+    }
+    if (_streakCountedForCurrentClear) return;
+
+    _streakCountedForCurrentClear = true;
+    try {
+      await _streakService.bumpDailyStreak();
+      DashboardSummaryController.requestRefresh();
+      unawaited(QuestProgressStore.recordZeroWasteDay());
+    } catch (_) {
+      _streakCountedForCurrentClear = false;
+    }
+  }
+
   Future<void> _toggleConsumed(FridgeItem item) async {
     final nextValue = !item.isConsumed;
     setState(() {
@@ -265,16 +309,35 @@ class _FridgePageState extends State<FridgePage> {
           )
           .toList(growable: false);
     });
+    FridgeItemsController.items.value = _items;
 
     try {
       await _fridgeRepository.setConsumed(
         id: item.id,
         isConsumed: nextValue,
       );
-      if (mounted) {
-        _showMessage(
-            nextValue ? 'Marked as consumed.' : 'Moved back to fridge.');
+
+      var message = nextValue ? 'Marked as consumed.' : 'Moved back to fridge.';
+      if (nextValue) {
+        final points = PointsCalculator.pointsForCategory(item.category);
+        try {
+          await _pointsService.awardFoodRescuePoints(
+            itemName: item.name,
+            points: points,
+          );
+          message = 'Marked as consumed. +$points pts!';
+        } catch (_) {
+          // Points are a bonus on top of the consumed-state update above,
+          // which already succeeded — don't fail the whole action for it.
+        }
+        // Reflect the new points on the leaderboard immediately, without
+        // waiting for a full leaderboard reload.
+        unawaited(QuestPointsStore.addBonusPoints(currentUserId, points));
+        unawaited(QuestProgressStore.recordItemRescued());
+
+        await _maybeBumpStreak();
       }
+      if (mounted) _showMessage(message);
     } catch (_) {
       if (!mounted) return;
       setState(() {
@@ -292,6 +355,7 @@ class _FridgePageState extends State<FridgePage> {
 
   Future<void> _generateRecipes() async {
     if (_activeIngredients.isEmpty) {
+      RescueRecipesController.recipes.value = const [];
       setState(() {
         _recipeError = 'No safe, available ingredients were found.';
         _recipes = const [];
@@ -307,6 +371,7 @@ class _FridgePageState extends State<FridgePage> {
       final recipes = await _recipeService.generate(
         ingredients: _activeIngredients,
       );
+      RescueRecipesController.recipes.value = recipes;
       if (!mounted) return;
       setState(() {
         _recipes = recipes;
@@ -325,83 +390,10 @@ class _FridgePageState extends State<FridgePage> {
     }
   }
 
-  List<FridgeItem> _ingredientsUsedBy(RecipeSuggestion recipe) {
-    final usedNames = recipe.ingredientsUsed
-        .map((ingredient) => _normalizeIngredientName(ingredient.name))
-        .where((name) => name.isNotEmpty)
-        .toList(growable: false);
-
-    return _items.where((item) {
-      if (item.isConsumed || item.quantity <= 0) return false;
-      final itemName = _normalizeIngredientName(item.name);
-      return usedNames.any(
-        (usedName) =>
-            usedName == itemName ||
-            usedName.contains(itemName) ||
-            itemName.contains(usedName),
-      );
-    }).toList(growable: false);
-  }
-
-  RecipeIngredient? _recipeIngredientForItem(
-    RecipeSuggestion recipe,
-    FridgeItem item,
-  ) {
-    final itemName = _normalizeIngredientName(item.name);
-    for (final ingredient in recipe.ingredientsUsed) {
-      final ingredientName = _normalizeIngredientName(ingredient.name);
-      if (ingredientName == itemName ||
-          ingredientName.contains(itemName) ||
-          itemName.contains(ingredientName)) {
-        return ingredient;
-      }
-    }
-    return null;
-  }
-
-  Future<void> _completeRecipe(
-    RecipeSuggestion recipe,
-    List<FridgeItem> usedItems,
-    int pax,
-  ) async {
-    final scale = pax / recipe.servings.clamp(1, 100);
-    final remainingQuantities = <String, double>{};
-    for (final item in usedItems) {
-      final ingredient = _recipeIngredientForItem(recipe, item);
-      if (ingredient == null) continue;
-      final quantityUsed = ingredient.quantity * scale;
-      remainingQuantities[item.id] =
-          (item.quantity - quantityUsed).clamp(0, item.quantity).toDouble();
-    }
-
-    await _fridgeRepository.updateRecipeQuantities(
-      remainingQuantities: remainingQuantities,
-    );
-    if (!mounted) return;
-
-    setState(() {
-      _items = _items.map(
-        (item) {
-          final remaining = remainingQuantities[item.id];
-          if (remaining == null) return item;
-          return item.copyWith(
-            quantity: remaining,
-            isConsumed: remaining <= 0.0001,
-          );
-        },
-      ).toList(growable: false);
-    });
-  }
-
   void _openRecipe(RecipeSuggestion recipe) {
-    final usedItems = _ingredientsUsedBy(recipe);
     Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (context) => _RecipeDetailPage(
-          recipe: recipe,
-          usedItems: usedItems,
-          onComplete: (pax) => _completeRecipe(recipe, usedItems, pax),
-        ),
+        builder: (context) => RecipeDetailPage(recipe: recipe),
       ),
     );
   }
@@ -418,20 +410,23 @@ class _FridgePageState extends State<FridgePage> {
 
     return DefaultTabController(
       length: 2,
+      initialIndex: widget.initialTab,
       child: Scaffold(
         backgroundColor: const Color(0xFFF7F8F4),
         appBar: AppBar(
           backgroundColor: const Color(0xFFF7F8F4),
-          title: const Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          title: Column(
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               Text(
                 'Rescue My Fridge',
-                style: TextStyle(fontWeight: FontWeight.w800),
+                style: theme.textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w800,
+                ),
               ),
               Text(
                 'Eat what you have. Waste less.',
-                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w400),
+                style: theme.textTheme.bodySmall,
               ),
             ],
           ),
@@ -753,8 +748,9 @@ class _FridgeItemCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final status = item.statusAt(DateTime.now());
-    final statusStyle = _statusStyle(status);
+    final now = DateTime.now();
+    final status = item.statusAt(now);
+    final statusStyle = _statusStyle(item, status, now);
     final theme = Theme.of(context);
 
     return Material(
@@ -876,20 +872,31 @@ class _FridgeItemCard extends StatelessWidget {
     }
   }
 
-  static _StatusStyle _statusStyle(FridgeItemStatus status) {
+  // Urgency coloring: 1 day (or less) left is red, 2 days left is yellow,
+  // 3+ days left is green — the food category icon shares the same color.
+  static const _red = _StatusStyle(Color(0xFFFFE5E2), Color(0xFFB42318));
+  static const _yellow = _StatusStyle(Color(0xFFFFF3C6), Color(0xFF8A6100));
+  static const _green = _StatusStyle(Color(0xFFE2F6E8), Color(0xFF176B3A));
+
+  static _StatusStyle _statusStyle(
+    FridgeItem item,
+    FridgeItemStatus status,
+    DateTime now,
+  ) {
     switch (status) {
       case FridgeItemStatus.overdue:
-        return const _StatusStyle(Color(0xFFFFE5E2), Color(0xFFB42318));
-      case FridgeItemStatus.today:
-        return const _StatusStyle(Color(0xFFFFE9D5), Color(0xFFB54708));
-      case FridgeItemStatus.soon:
-        return const _StatusStyle(Color(0xFFFFF3C6), Color(0xFF8A6100));
-      case FridgeItemStatus.fresh:
-        return const _StatusStyle(Color(0xFFE2F6E8), Color(0xFF176B3A));
+        return _red;
       case FridgeItemStatus.noExpiry:
         return const _StatusStyle(Color(0xFFE7EEF5), Color(0xFF36566F));
       case FridgeItemStatus.consumed:
         return const _StatusStyle(Color(0xFFE6E8E3), Color(0xFF5F665D));
+      case FridgeItemStatus.today:
+      case FridgeItemStatus.soon:
+      case FridgeItemStatus.fresh:
+        final daysLeft = item.daysRemainingAt(now) ?? 99;
+        if (daysLeft <= 1) return _red;
+        if (daysLeft == 2) return _yellow;
+        return _green;
     }
   }
 }
@@ -1064,16 +1071,21 @@ class _RecipeCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              Container(
-                width: 44,
-                height: 44,
-                decoration: BoxDecoration(
-                  color: const Color(0xFFE9E2FF),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: const Icon(
-                  Icons.restaurant_menu_rounded,
-                  color: Color(0xFF6D4DD4),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(14),
+                child: SizedBox(
+                  width: 44,
+                  height: 44,
+                  child: RecipeImage(
+                    recipeTitle: recipe.title,
+                    fallback: Container(
+                      color: const Color(0xFFE9E2FF),
+                      child: const Icon(
+                        Icons.restaurant_menu_rounded,
+                        color: Color(0xFF6D4DD4),
+                      ),
+                    ),
+                  ),
                 ),
               ),
               const SizedBox(width: 12),
@@ -1117,440 +1129,6 @@ class _RecipeCard extends StatelessWidget {
               onPressed: onSelect,
               icon: const Icon(Icons.arrow_forward_rounded),
               label: const Text('Select recipe'),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _RecipeDetailPage extends StatefulWidget {
-  const _RecipeDetailPage({
-    required this.recipe,
-    required this.usedItems,
-    required this.onComplete,
-  });
-
-  final RecipeSuggestion recipe;
-  final List<FridgeItem> usedItems;
-  final Future<void> Function(int pax) onComplete;
-
-  @override
-  State<_RecipeDetailPage> createState() => _RecipeDetailPageState();
-}
-
-class _RecipeDetailPageState extends State<_RecipeDetailPage> {
-  bool _isCompleting = false;
-  bool _isComplete = false;
-  String? _completionError;
-  late int _pax;
-
-  RecipeSuggestion get recipe => widget.recipe;
-
-  int get _basePax => recipe.servings.clamp(1, 8);
-
-  @override
-  void initState() {
-    super.initState();
-    _pax = _basePax;
-  }
-
-  RecipeIngredient? _ingredientForItem(FridgeItem item) {
-    final itemName = _normalizeIngredientName(item.name);
-    for (final ingredient in recipe.ingredientsUsed) {
-      final ingredientName = _normalizeIngredientName(ingredient.name);
-      if (ingredientName == itemName ||
-          ingredientName.contains(itemName) ||
-          itemName.contains(ingredientName)) {
-        return ingredient;
-      }
-    }
-    return null;
-  }
-
-  double _scaledQuantity(RecipeIngredient ingredient) {
-    return ingredient.quantity * (_pax / _basePax);
-  }
-
-  int get _maxPax {
-    var maximum = 8;
-    for (final item in widget.usedItems) {
-      final ingredient = _ingredientForItem(item);
-      if (ingredient == null || ingredient.quantity <= 0) continue;
-      final supported =
-          (item.quantity * _basePax / ingredient.quantity).floor();
-      if (supported < maximum) maximum = supported;
-    }
-    return maximum.clamp(1, 8);
-  }
-
-  bool get _hasEnoughStock {
-    for (final item in widget.usedItems) {
-      final ingredient = _ingredientForItem(item);
-      if (ingredient != null &&
-          _scaledQuantity(ingredient) > item.quantity + 0.0001) {
-        return false;
-      }
-    }
-    return true;
-  }
-
-  Future<void> _complete() async {
-    if (_isCompleting || _isComplete || widget.usedItems.isEmpty) return;
-
-    setState(() {
-      _isCompleting = true;
-      _completionError = null;
-    });
-
-    try {
-      await widget.onComplete(_pax);
-      if (!mounted) return;
-      setState(() => _isComplete = true);
-    } catch (_) {
-      if (!mounted) return;
-      setState(() {
-        _completionError = 'Could not update your fridge. Please try again.';
-      });
-    } finally {
-      if (mounted) setState(() => _isCompleting = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
-    return Scaffold(
-      backgroundColor: const Color(0xFFF7F8F4),
-      appBar: AppBar(
-        backgroundColor: const Color(0xFFF7F8F4),
-        title: const Text('Rescue recipe'),
-      ),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
-        children: [
-          Container(
-            padding: const EdgeInsets.all(22),
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [Color(0xFF5F43C8), Color(0xFF8265E8)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              borderRadius: BorderRadius.circular(24),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Icon(
-                  Icons.auto_awesome_rounded,
-                  color: Colors.white,
-                  size: 28,
-                ),
-                const SizedBox(height: 14),
-                Text(
-                  recipe.title,
-                  style: theme.textTheme.headlineSmall?.copyWith(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  recipe.summary,
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    color: Colors.white.withValues(alpha: 0.9),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Row(
-                  children: [
-                    _RecipeMeta(
-                      icon: Icons.schedule_rounded,
-                      label: '${recipe.timeMinutes} min',
-                    ),
-                    const SizedBox(width: 10),
-                    _RecipeMeta(
-                      icon: Icons.signal_cellular_alt_rounded,
-                      label: recipe.difficulty,
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-          if (recipe.ingredientsUsed.isNotEmpty) ...[
-            const SizedBox(height: 24),
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    'Ingredients',
-                    style: theme.textTheme.titleLarge?.copyWith(
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                ),
-                Container(
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(99),
-                    border: Border.all(color: const Color(0xFFDADDD7)),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      IconButton(
-                        tooltip: 'Fewer pax',
-                        onPressed: _isComplete || _pax <= 1
-                            ? null
-                            : () => setState(() => _pax--),
-                        icon: const Icon(Icons.remove_rounded),
-                      ),
-                      Text(
-                        '$_pax pax',
-                        style: const TextStyle(fontWeight: FontWeight.w800),
-                      ),
-                      IconButton(
-                        tooltip: 'More pax',
-                        onPressed: _isComplete || _pax >= _maxPax
-                            ? null
-                            : () => setState(() => _pax++),
-                        icon: const Icon(Icons.add_rounded),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            Text(
-              _pax >= _maxPax && _maxPax < 8
-                  ? 'Maximum based on your tracked fridge stock'
-                  : 'Adjust the quantities for the number of people cooking',
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-            ),
-            const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(16),
-              ),
-              child: Column(
-                children: recipe.ingredientsUsed
-                    .map(
-                      (ingredient) => Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 7),
-                        child: Row(
-                          children: [
-                            const Icon(
-                              Icons.eco_outlined,
-                              size: 19,
-                              color: Color(0xFF278A52),
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(child: Text(ingredient.name)),
-                            Text(
-                              '${_formatQuantity(_scaledQuantity(ingredient))} ${ingredient.unit}',
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w800,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    )
-                    .toList(growable: false),
-              ),
-            ),
-          ],
-          if (recipe.steps.isNotEmpty) ...[
-            const SizedBox(height: 24),
-            Text(
-              'How to make it',
-              style: theme.textTheme.titleLarge?.copyWith(
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-            const SizedBox(height: 12),
-            ...recipe.steps.indexed.map(
-              (entry) => Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      CircleAvatar(
-                        radius: 15,
-                        backgroundColor: const Color(0xFF6D4DD4),
-                        foregroundColor: Colors.white,
-                        child: Text('${entry.$1 + 1}'),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(child: Text(entry.$2)),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ],
-          if (recipe.wasteSavingTip.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: const Color(0xFFE5F6E9),
-                borderRadius: BorderRadius.circular(16),
-              ),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Icon(Icons.recycling_rounded, color: Color(0xFF176B3A)),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'Waste-saving tip',
-                          style: TextStyle(fontWeight: FontWeight.w800),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(recipe.wasteSavingTip),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-          const SizedBox(height: 24),
-          Container(
-            padding: const EdgeInsets.all(18),
-            decoration: BoxDecoration(
-              color: _isComplete ? const Color(0xFFE5F6E9) : Colors.white,
-              borderRadius: BorderRadius.circular(18),
-              border: Border.all(
-                color: _isComplete
-                    ? const Color(0xFFA9DDB6)
-                    : const Color(0xFFE1E4DE),
-              ),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Icon(
-                      _isComplete
-                          ? Icons.check_circle_rounded
-                          : Icons.inventory_2_outlined,
-                      color: _isComplete
-                          ? const Color(0xFF176B3A)
-                          : const Color(0xFF6D4DD4),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        _isComplete
-                            ? 'Recipe completed'
-                            : 'Complete this recipe',
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                Text(
-                  _isComplete
-                      ? 'The quantities for $_pax pax were removed from your fridge.'
-                      : widget.usedItems.isEmpty
-                          ? 'No matching fridge quantities were found for this recipe.'
-                          : 'This subtracts the scaled ingredient quantities shown above from your fridge.',
-                ),
-                if (!_hasEnoughStock && !_isComplete) ...[
-                  const SizedBox(height: 10),
-                  Text(
-                    'There is not enough tracked stock for $_pax pax. Choose fewer pax.',
-                    style: TextStyle(color: theme.colorScheme.error),
-                  ),
-                ],
-                if (_completionError != null) ...[
-                  const SizedBox(height: 10),
-                  Text(
-                    _completionError!,
-                    style: TextStyle(color: theme.colorScheme.error),
-                  ),
-                ],
-                if (!_isComplete) ...[
-                  const SizedBox(height: 16),
-                  SizedBox(
-                    width: double.infinity,
-                    child: FilledButton.icon(
-                      onPressed: widget.usedItems.isEmpty ||
-                              !_hasEnoughStock ||
-                              _isCompleting
-                          ? null
-                          : _complete,
-                      icon: _isCompleting
-                          ? const SizedBox.square(
-                              dimension: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.check_rounded),
-                      label: Text(
-                        _isCompleting
-                            ? 'Updating your fridge…'
-                            : 'Complete recipe',
-                      ),
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _RecipeMeta extends StatelessWidget {
-  const _RecipeMeta({required this.icon, required this.label});
-
-  final IconData icon;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.18),
-        borderRadius: BorderRadius.circular(99),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 17, color: Colors.white),
-          const SizedBox(width: 6),
-          Text(
-            label,
-            style: const TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.w700,
             ),
           ),
         ],

@@ -14,5 +14,5 @@ const List<NavItem> kNavItems = [
   NavItem(label: 'Home', icon: Icons.public, path: '/dashboard'),
   NavItem(label: 'Inventory', icon: Icons.shopping_cart, path: '/inventory'),
   NavItem(label: 'Fridge', icon: Icons.kitchen, path: '/fridge'),
-  NavItem(label: 'Quests', icon: Icons.emoji_events, path: '/quests'),
+  NavItem(label: 'Quests', icon: Icons.house, path: '/quests'),
 ];
