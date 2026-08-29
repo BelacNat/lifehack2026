@@ -48,12 +48,12 @@ class FridgeItem {
     return expiry.difference(today).inDays;
   }
 
-  FridgeItem copyWith({bool? isConsumed}) {
+  FridgeItem copyWith({bool? isConsumed, double? quantity}) {
     return FridgeItem(
       id: id,
       name: name,
       category: category,
-      quantity: quantity,
+      quantity: quantity ?? this.quantity,
       unit: unit,
       expiresOn: expiresOn,
       isConsumed: isConsumed ?? this.isConsumed,

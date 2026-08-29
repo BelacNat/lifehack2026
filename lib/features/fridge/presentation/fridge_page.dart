@@ -10,6 +10,16 @@ String _categoryLabel(String category) {
   return '${category[0].toUpperCase()}${category.substring(1)}';
 }
 
+String _normalizeIngredientName(String value) {
+  return value.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
+}
+
+String _formatQuantity(double quantity) {
+  return quantity == quantity.roundToDouble()
+      ? quantity.toInt().toString()
+      : quantity.toStringAsFixed(1);
+}
+
 class FridgePage extends StatefulWidget {
   const FridgePage({
     super.key,
@@ -31,6 +41,7 @@ class _FridgePageState extends State<FridgePage> {
 
   List<RecipeSuggestion> _recipes = const [];
   String? _loadError;
+  String? _recipeError;
   bool _isLoading = true;
   bool _isGenerating = false;
 
@@ -59,6 +70,7 @@ class _FridgePageState extends State<FridgePage> {
         _items = items;
         _isLoading = false;
       });
+      await _generateRecipes();
     } catch (_) {
       if (!mounted) return;
       setState(() {
@@ -149,26 +161,118 @@ class _FridgePageState extends State<FridgePage> {
 
   Future<void> _generateRecipes() async {
     if (_activeIngredients.isEmpty) {
-      _showMessage('No safe, available ingredients were found.');
+      setState(() {
+        _recipeError = 'No safe, available ingredients were found.';
+        _recipes = const [];
+      });
       return;
     }
 
-    setState(() => _isGenerating = true);
+    setState(() {
+      _isGenerating = true;
+      _recipeError = null;
+    });
     try {
       final recipes = await _recipeService.generate(
         ingredients: _activeIngredients,
       );
       if (!mounted) return;
-      setState(() => _recipes = recipes);
+      setState(() {
+        _recipes = recipes;
+        _recipeError = null;
+      });
     } on RecipeSuggestionException catch (error) {
-      if (mounted) _showMessage(error.message);
+      if (mounted) setState(() => _recipeError = error.message);
     } catch (_) {
       if (mounted) {
-        _showMessage('Something went wrong while creating recipes.');
+        setState(() {
+          _recipeError = 'Something went wrong while creating recipes.';
+        });
       }
     } finally {
       if (mounted) setState(() => _isGenerating = false);
     }
+  }
+
+  List<FridgeItem> _ingredientsUsedBy(RecipeSuggestion recipe) {
+    final usedNames = recipe.ingredientsUsed
+        .map((ingredient) => _normalizeIngredientName(ingredient.name))
+        .where((name) => name.isNotEmpty)
+        .toList(growable: false);
+
+    return _items.where((item) {
+      if (item.isConsumed || item.quantity <= 0) return false;
+      final itemName = _normalizeIngredientName(item.name);
+      return usedNames.any(
+        (usedName) =>
+            usedName == itemName ||
+            usedName.contains(itemName) ||
+            itemName.contains(usedName),
+      );
+    }).toList(growable: false);
+  }
+
+  RecipeIngredient? _recipeIngredientForItem(
+    RecipeSuggestion recipe,
+    FridgeItem item,
+  ) {
+    final itemName = _normalizeIngredientName(item.name);
+    for (final ingredient in recipe.ingredientsUsed) {
+      final ingredientName = _normalizeIngredientName(ingredient.name);
+      if (ingredientName == itemName ||
+          ingredientName.contains(itemName) ||
+          itemName.contains(ingredientName)) {
+        return ingredient;
+      }
+    }
+    return null;
+  }
+
+  Future<void> _completeRecipe(
+    RecipeSuggestion recipe,
+    List<FridgeItem> usedItems,
+    int pax,
+  ) async {
+    final scale = pax / recipe.servings.clamp(1, 100);
+    final remainingQuantities = <String, double>{};
+    for (final item in usedItems) {
+      final ingredient = _recipeIngredientForItem(recipe, item);
+      if (ingredient == null) continue;
+      final quantityUsed = ingredient.quantity * scale;
+      remainingQuantities[item.id] =
+          (item.quantity - quantityUsed).clamp(0, item.quantity).toDouble();
+    }
+
+    await _fridgeRepository.updateRecipeQuantities(
+      remainingQuantities: remainingQuantities,
+    );
+    if (!mounted) return;
+
+    setState(() {
+      _items = _items.map(
+        (item) {
+          final remaining = remainingQuantities[item.id];
+          if (remaining == null) return item;
+          return item.copyWith(
+            quantity: remaining,
+            isConsumed: remaining <= 0.0001,
+          );
+        },
+      ).toList(growable: false);
+    });
+  }
+
+  void _openRecipe(RecipeSuggestion recipe) {
+    final usedItems = _ingredientsUsedBy(recipe);
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => _RecipeDetailPage(
+          recipe: recipe,
+          usedItems: usedItems,
+          onComplete: (pax) => _completeRecipe(recipe, usedItems, pax),
+        ),
+      ),
+    );
   }
 
   void _showMessage(String message) {
@@ -181,106 +285,131 @@ class _FridgePageState extends State<FridgePage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
-    return Scaffold(
-      backgroundColor: const Color(0xFFF7F8F4),
-      appBar: AppBar(
+    return DefaultTabController(
+      length: 2,
+      child: Scaffold(
         backgroundColor: const Color(0xFFF7F8F4),
-        title: const Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Rescue My Fridge',
-              style: TextStyle(fontWeight: FontWeight.w800),
-            ),
-            Text(
-              'Eat what you have. Waste less.',
-              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w400),
-            ),
-          ],
+        appBar: AppBar(
+          backgroundColor: const Color(0xFFF7F8F4),
+          title: const Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Rescue My Fridge',
+                style: TextStyle(fontWeight: FontWeight.w800),
+              ),
+              Text(
+                'Eat what you have. Waste less.',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w400),
+              ),
+            ],
+          ),
+          bottom: const TabBar(
+            tabs: [
+              Tab(
+                icon: Icon(Icons.schedule_rounded),
+                text: 'Expiring soon',
+              ),
+              Tab(
+                icon: Icon(Icons.auto_awesome_rounded),
+                text: 'Rescue recipes',
+              ),
+            ],
+          ),
         ),
-      ),
-      body: RefreshIndicator(
-        onRefresh: _loadItems,
-        child: CustomScrollView(
-          physics: const AlwaysScrollableScrollPhysics(),
-          slivers: [
-            SliverPadding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-              sliver: SliverToBoxAdapter(
-                child: _AiRecipeLab(
-                  priorityCount: _recipePriorityCount,
-                  availableCount: _activeIngredients.length,
-                  isGenerating: _isGenerating,
-                  recipes: _recipes,
-                  onGenerate: _generateRecipes,
-                ),
-              ),
-            ),
-            SliverPadding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-              sliver: SliverToBoxAdapter(
-                child: _RescueSummary(
-                  rescueSoonCount: _rescueSoonCount,
-                ),
-              ),
-            ),
-            SliverPadding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-              sliver: SliverToBoxAdapter(
-                child: Row(
-                  children: [
-                    Text(
-                      'Expiring soon',
-                      style: theme.textTheme.titleLarge?.copyWith(
-                        fontWeight: FontWeight.w800,
+        body: TabBarView(
+          children: [
+            RefreshIndicator(
+              onRefresh: _loadItems,
+              child: CustomScrollView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                slivers: [
+                  SliverPadding(
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+                    sliver: SliverToBoxAdapter(
+                      child: _RescueSummary(
+                        rescueSoonCount: _rescueSoonCount,
                       ),
                     ),
-                    const Spacer(),
-                    Text(
-                      '${_visibleItems.length} items',
-                      style: theme.textTheme.bodySmall,
+                  ),
+                  SliverPadding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                    sliver: SliverToBoxAdapter(
+                      child: Row(
+                        children: [
+                          Text(
+                            'Expiring soon',
+                            style: theme.textTheme.titleLarge?.copyWith(
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          const Spacer(),
+                          Text(
+                            '${_visibleItems.length} items',
+                            style: theme.textTheme.bodySmall,
+                          ),
+                        ],
+                      ),
                     ),
-                  ],
-                ),
+                  ),
+                  if (_isLoading)
+                    const SliverPadding(
+                      padding: EdgeInsets.all(32),
+                      sliver: SliverToBoxAdapter(
+                        child: Center(child: CircularProgressIndicator()),
+                      ),
+                    )
+                  else if (_loadError != null)
+                    SliverPadding(
+                      padding: const EdgeInsets.all(24),
+                      sliver: SliverToBoxAdapter(
+                        child: _LoadErrorState(
+                          message: _loadError!,
+                          onRetry: _loadItems,
+                        ),
+                      ),
+                    )
+                  else if (_visibleItems.isEmpty)
+                    const SliverPadding(
+                      padding: EdgeInsets.all(24),
+                      sliver: SliverToBoxAdapter(child: _EmptyFridgeState()),
+                    )
+                  else
+                    SliverPadding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 32),
+                      sliver: SliverList.separated(
+                        itemCount: _visibleItems.length,
+                        separatorBuilder: (_, __) => const SizedBox(height: 10),
+                        itemBuilder: (context, index) {
+                          final item = _visibleItems[index];
+                          return _FridgeItemCard(
+                            item: item,
+                            onToggleConsumed: () => _toggleConsumed(item),
+                          );
+                        },
+                      ),
+                    ),
+                ],
               ),
             ),
-            if (_isLoading)
-              const SliverPadding(
-                padding: EdgeInsets.all(32),
-                sliver: SliverToBoxAdapter(
-                  child: Center(child: CircularProgressIndicator()),
-                ),
-              )
-            else if (_loadError != null)
-              SliverPadding(
-                padding: const EdgeInsets.all(24),
-                sliver: SliverToBoxAdapter(
-                  child: _LoadErrorState(
-                    message: _loadError!,
-                    onRetry: _loadItems,
+            RefreshIndicator(
+              onRefresh: _generateRecipes,
+              child: ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+                children: [
+                  _AiRecipeLab(
+                    priorityCount: _recipePriorityCount,
+                    availableCount: _activeIngredients.length,
+                    isGenerating: _isGenerating,
+                    recipes: _recipes,
+                    errorMessage: _recipeError,
+                    onGenerate: _generateRecipes,
+                    onSelectRecipe: _openRecipe,
                   ),
-                ),
-              )
-            else if (_visibleItems.isEmpty)
-              const SliverPadding(
-                padding: EdgeInsets.all(24),
-                sliver: SliverToBoxAdapter(child: _EmptyFridgeState()),
-              )
-            else
-              SliverPadding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 32),
-                sliver: SliverList.separated(
-                  itemCount: _visibleItems.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 10),
-                  itemBuilder: (context, index) {
-                    final item = _visibleItems[index];
-                    return _FridgeItemCard(
-                      item: item,
-                      onToggleConsumed: () => _toggleConsumed(item),
-                    );
-                  },
-                ),
+                ],
               ),
+            ),
           ],
         ),
       ),
@@ -525,14 +654,18 @@ class _AiRecipeLab extends StatelessWidget {
     required this.availableCount,
     required this.isGenerating,
     required this.recipes,
+    required this.errorMessage,
     required this.onGenerate,
+    required this.onSelectRecipe,
   });
 
   final int priorityCount;
   final int availableCount;
   final bool isGenerating;
   final List<RecipeSuggestion> recipes;
+  final String? errorMessage;
   final VoidCallback onGenerate;
+  final ValueChanged<RecipeSuggestion> onSelectRecipe;
 
   @override
   Widget build(BuildContext context) {
@@ -579,6 +712,17 @@ class _AiRecipeLab extends StatelessWidget {
                   ],
                 ),
               ),
+              if (recipes.isNotEmpty)
+                IconButton(
+                  tooltip: 'Refresh recipes',
+                  onPressed: isGenerating ? null : onGenerate,
+                  icon: isGenerating
+                      ? const SizedBox.square(
+                          dimension: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.refresh_rounded),
+                ),
             ],
           ),
           const SizedBox(height: 16),
@@ -588,34 +732,56 @@ class _AiRecipeLab extends StatelessWidget {
               color: theme.colorScheme.onSurfaceVariant,
             ),
           ),
-          const SizedBox(height: 12),
-          SizedBox(
-            width: double.infinity,
-            child: FilledButton.icon(
-              onPressed: isGenerating ? null : onGenerate,
-              icon: isGenerating
-                  ? const SizedBox.square(
-                      dimension: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.auto_awesome_rounded),
-              label: Text(
-                isGenerating
-                    ? 'Creating rescue recipes…'
-                    : 'Recommend rescue recipes',
-              ),
-              style: FilledButton.styleFrom(
-                backgroundColor: const Color(0xFF6D4DD4),
-                padding: const EdgeInsets.symmetric(vertical: 14),
+          if (isGenerating && recipes.isEmpty) ...[
+            const SizedBox(height: 24),
+            const Center(
+              child: Column(
+                children: [
+                  CircularProgressIndicator(),
+                  SizedBox(height: 12),
+                  Text('Preparing your rescue recipes…'),
+                ],
               ),
             ),
-          ),
+          ],
+          if (errorMessage != null && recipes.isEmpty) ...[
+            const SizedBox(height: 20),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.74),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Column(
+                children: [
+                  Text(errorMessage!, textAlign: TextAlign.center),
+                  const SizedBox(height: 10),
+                  OutlinedButton.icon(
+                    onPressed: onGenerate,
+                    icon: const Icon(Icons.refresh_rounded),
+                    label: const Text('Try again'),
+                  ),
+                ],
+              ),
+            ),
+          ],
           if (recipes.isNotEmpty) ...[
             const SizedBox(height: 20),
+            Text(
+              'Recommended for you',
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 10),
             ...recipes.map(
               (recipe) => Padding(
                 padding: const EdgeInsets.only(bottom: 10),
-                child: _RecipeCard(recipe: recipe),
+                child: _RecipeCard(
+                  recipe: recipe,
+                  onSelect: () => onSelectRecipe(recipe),
+                ),
               ),
             ),
           ],
@@ -626,76 +792,516 @@ class _AiRecipeLab extends StatelessWidget {
 }
 
 class _RecipeCard extends StatelessWidget {
-  const _RecipeCard({required this.recipe});
+  const _RecipeCard({required this.recipe, required this.onSelect});
 
   final RecipeSuggestion recipe;
+  final VoidCallback onSelect;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return ExpansionTile(
-      backgroundColor: Colors.white,
-      collapsedBackgroundColor: Colors.white,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      collapsedShape:
-          RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-      title: Text(
-        recipe.title,
-        style:
-            theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800),
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
       ),
-      subtitle: Text('${recipe.timeMinutes} min · ${recipe.difficulty}'),
-      children: [
-        Align(
-          alignment: Alignment.centerLeft,
-          child: Text(recipe.summary),
-        ),
-        if (recipe.ingredientsUsed.isNotEmpty) ...[
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE9E2FF),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: const Icon(
+                  Icons.restaurant_menu_rounded,
+                  color: Color(0xFF6D4DD4),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      recipe.title,
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      '${recipe.timeMinutes} min · ${recipe.difficulty} · ${recipe.servings} pax',
+                      style: theme.textTheme.bodySmall,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
           const SizedBox(height: 12),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: Wrap(
+          Text(recipe.summary),
+          if (recipe.ingredientsUsed.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Wrap(
               spacing: 6,
               runSpacing: 6,
               children: recipe.ingredientsUsed
-                  .map((ingredient) => Chip(label: Text(ingredient)))
+                  .take(3)
+                  .map((ingredient) => Chip(label: Text(ingredient.name)))
                   .toList(growable: false),
+            ),
+          ],
+          const SizedBox(height: 14),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.tonalIcon(
+              onPressed: onSelect,
+              icon: const Icon(Icons.arrow_forward_rounded),
+              label: const Text('Select recipe'),
             ),
           ),
         ],
-        if (recipe.steps.isNotEmpty) ...[
-          const SizedBox(height: 12),
-          ...recipe.steps.indexed.map(
-            (entry) => Padding(
-              padding: const EdgeInsets.only(bottom: 8),
+      ),
+    );
+  }
+}
+
+class _RecipeDetailPage extends StatefulWidget {
+  const _RecipeDetailPage({
+    required this.recipe,
+    required this.usedItems,
+    required this.onComplete,
+  });
+
+  final RecipeSuggestion recipe;
+  final List<FridgeItem> usedItems;
+  final Future<void> Function(int pax) onComplete;
+
+  @override
+  State<_RecipeDetailPage> createState() => _RecipeDetailPageState();
+}
+
+class _RecipeDetailPageState extends State<_RecipeDetailPage> {
+  bool _isCompleting = false;
+  bool _isComplete = false;
+  String? _completionError;
+  late int _pax;
+
+  RecipeSuggestion get recipe => widget.recipe;
+
+  int get _basePax => recipe.servings.clamp(1, 8);
+
+  @override
+  void initState() {
+    super.initState();
+    _pax = _basePax;
+  }
+
+  RecipeIngredient? _ingredientForItem(FridgeItem item) {
+    final itemName = _normalizeIngredientName(item.name);
+    for (final ingredient in recipe.ingredientsUsed) {
+      final ingredientName = _normalizeIngredientName(ingredient.name);
+      if (ingredientName == itemName ||
+          ingredientName.contains(itemName) ||
+          itemName.contains(ingredientName)) {
+        return ingredient;
+      }
+    }
+    return null;
+  }
+
+  double _scaledQuantity(RecipeIngredient ingredient) {
+    return ingredient.quantity * (_pax / _basePax);
+  }
+
+  int get _maxPax {
+    var maximum = 8;
+    for (final item in widget.usedItems) {
+      final ingredient = _ingredientForItem(item);
+      if (ingredient == null || ingredient.quantity <= 0) continue;
+      final supported =
+          (item.quantity * _basePax / ingredient.quantity).floor();
+      if (supported < maximum) maximum = supported;
+    }
+    return maximum.clamp(1, 8);
+  }
+
+  bool get _hasEnoughStock {
+    for (final item in widget.usedItems) {
+      final ingredient = _ingredientForItem(item);
+      if (ingredient != null &&
+          _scaledQuantity(ingredient) > item.quantity + 0.0001) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  Future<void> _complete() async {
+    if (_isCompleting || _isComplete || widget.usedItems.isEmpty) return;
+
+    setState(() {
+      _isCompleting = true;
+      _completionError = null;
+    });
+
+    try {
+      await widget.onComplete(_pax);
+      if (!mounted) return;
+      setState(() => _isComplete = true);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _completionError = 'Could not update your fridge. Please try again.';
+      });
+    } finally {
+      if (mounted) setState(() => _isCompleting = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Scaffold(
+      backgroundColor: const Color(0xFFF7F8F4),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFFF7F8F4),
+        title: const Text('Rescue recipe'),
+      ),
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
+        children: [
+          Container(
+            padding: const EdgeInsets.all(22),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [Color(0xFF5F43C8), Color(0xFF8265E8)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(24),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(
+                  Icons.auto_awesome_rounded,
+                  color: Colors.white,
+                  size: 28,
+                ),
+                const SizedBox(height: 14),
+                Text(
+                  recipe.title,
+                  style: theme.textTheme.headlineSmall?.copyWith(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  recipe.summary,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: Colors.white.withValues(alpha: 0.9),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    _RecipeMeta(
+                      icon: Icons.schedule_rounded,
+                      label: '${recipe.timeMinutes} min',
+                    ),
+                    const SizedBox(width: 10),
+                    _RecipeMeta(
+                      icon: Icons.signal_cellular_alt_rounded,
+                      label: recipe.difficulty,
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          if (recipe.ingredientsUsed.isNotEmpty) ...[
+            const SizedBox(height: 24),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Ingredients',
+                    style: theme.textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(99),
+                    border: Border.all(color: const Color(0xFFDADDD7)),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        tooltip: 'Fewer pax',
+                        onPressed: _isComplete || _pax <= 1
+                            ? null
+                            : () => setState(() => _pax--),
+                        icon: const Icon(Icons.remove_rounded),
+                      ),
+                      Text(
+                        '$_pax pax',
+                        style: const TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                      IconButton(
+                        tooltip: 'More pax',
+                        onPressed: _isComplete || _pax >= _maxPax
+                            ? null
+                            : () => setState(() => _pax++),
+                        icon: const Icon(Icons.add_rounded),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              _pax >= _maxPax && _maxPax < 8
+                  ? 'Maximum based on your tracked fridge stock'
+                  : 'Adjust the quantities for the number of people cooking',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Column(
+                children: recipe.ingredientsUsed
+                    .map(
+                      (ingredient) => Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 7),
+                        child: Row(
+                          children: [
+                            const Icon(
+                              Icons.eco_outlined,
+                              size: 19,
+                              color: Color(0xFF278A52),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(child: Text(ingredient.name)),
+                            Text(
+                              '${_formatQuantity(_scaledQuantity(ingredient))} ${ingredient.unit}',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    )
+                    .toList(growable: false),
+              ),
+            ),
+          ],
+          if (recipe.steps.isNotEmpty) ...[
+            const SizedBox(height: 24),
+            Text(
+              'How to make it',
+              style: theme.textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 12),
+            ...recipe.steps.indexed.map(
+              (entry) => Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      CircleAvatar(
+                        radius: 15,
+                        backgroundColor: const Color(0xFF6D4DD4),
+                        foregroundColor: Colors.white,
+                        child: Text('${entry.$1 + 1}'),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(child: Text(entry.$2)),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+          if (recipe.wasteSavingTip.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: const Color(0xFFE5F6E9),
+                borderRadius: BorderRadius.circular(16),
+              ),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    '${entry.$1 + 1}.',
-                    style: const TextStyle(fontWeight: FontWeight.w800),
+                  const Icon(Icons.recycling_rounded, color: Color(0xFF176B3A)),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Waste-saving tip',
+                          style: TextStyle(fontWeight: FontWeight.w800),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(recipe.wasteSavingTip),
+                      ],
+                    ),
                   ),
-                  const SizedBox(width: 8),
-                  Expanded(child: Text(entry.$2)),
                 ],
               ),
             ),
+          ],
+          const SizedBox(height: 24),
+          Container(
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              color: _isComplete ? const Color(0xFFE5F6E9) : Colors.white,
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(
+                color: _isComplete
+                    ? const Color(0xFFA9DDB6)
+                    : const Color(0xFFE1E4DE),
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      _isComplete
+                          ? Icons.check_circle_rounded
+                          : Icons.inventory_2_outlined,
+                      color: _isComplete
+                          ? const Color(0xFF176B3A)
+                          : const Color(0xFF6D4DD4),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        _isComplete
+                            ? 'Recipe completed'
+                            : 'Complete this recipe',
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  _isComplete
+                      ? 'The quantities for $_pax pax were removed from your fridge.'
+                      : widget.usedItems.isEmpty
+                          ? 'No matching fridge quantities were found for this recipe.'
+                          : 'This subtracts the scaled ingredient quantities shown above from your fridge.',
+                ),
+                if (!_hasEnoughStock && !_isComplete) ...[
+                  const SizedBox(height: 10),
+                  Text(
+                    'There is not enough tracked stock for $_pax pax. Choose fewer pax.',
+                    style: TextStyle(color: theme.colorScheme.error),
+                  ),
+                ],
+                if (_completionError != null) ...[
+                  const SizedBox(height: 10),
+                  Text(
+                    _completionError!,
+                    style: TextStyle(color: theme.colorScheme.error),
+                  ),
+                ],
+                if (!_isComplete) ...[
+                  const SizedBox(height: 16),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      onPressed: widget.usedItems.isEmpty ||
+                              !_hasEnoughStock ||
+                              _isCompleting
+                          ? null
+                          : _complete,
+                      icon: _isCompleting
+                          ? const SizedBox.square(
+                              dimension: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.check_rounded),
+                      label: Text(
+                        _isCompleting
+                            ? 'Updating your fridge…'
+                            : 'Complete recipe',
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
           ),
         ],
-        if (recipe.wasteSavingTip.isNotEmpty)
-          Container(
-            width: double.infinity,
-            margin: const EdgeInsets.only(top: 4),
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: const Color(0xFFEAF7ED),
-              borderRadius: BorderRadius.circular(12),
+      ),
+    );
+  }
+}
+
+class _RecipeMeta extends StatelessWidget {
+  const _RecipeMeta({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.18),
+        borderRadius: BorderRadius.circular(99),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 17, color: Colors.white),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w700,
             ),
-            child: Text('♻️ ${recipe.wasteSavingTip}'),
           ),
-      ],
+        ],
+      ),
     );
   }
 }

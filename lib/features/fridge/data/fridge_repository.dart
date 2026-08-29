@@ -12,6 +12,10 @@ abstract class FridgeRepository {
     required String id,
     required bool isConsumed,
   });
+
+  Future<void> updateRecipeQuantities({
+    required Map<String, double> remainingQuantities,
+  });
 }
 
 class SupabaseFridgeRepository implements FridgeRepository {
@@ -56,5 +60,21 @@ class SupabaseFridgeRepository implements FridgeRepository {
       'consumed_at':
           isConsumed ? DateTime.now().toUtc().toIso8601String() : null,
     }).eq('id', int.parse(id));
+  }
+
+  @override
+  Future<void> updateRecipeQuantities({
+    required Map<String, double> remainingQuantities,
+  }) async {
+    final completedAt = DateTime.now().toUtc().toIso8601String();
+    await Future.wait(
+      remainingQuantities.entries.map((entry) {
+        final remaining = entry.value <= 0.0001 ? 0 : entry.value;
+        return _database.from(tableName).update({
+          'quantity': remaining,
+          'consumed_at': remaining == 0 ? completedAt : null,
+        }).eq('id', int.parse(entry.key));
+      }),
+    );
   }
 }

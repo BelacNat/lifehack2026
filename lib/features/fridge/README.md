@@ -8,7 +8,12 @@ does not create or alter any tables, columns, policies, or migrations.
 - Expiry urgency calculated from each item's expiry date
 - Rescue-only view for unconsumed food expiring soon
 - Supabase-backed consumed actions
-- AI rescue recipes placed before the urgent-food list
+- Separate Expiring Soon and Rescue Recipes tabs
+- AI rescue recipes generated automatically after fridge data loads
+- Selectable recipe cards with a dedicated recipe-detail page
+- Recipe ingredients include AI-generated two-pax quantities
+- A pax selector scales recipe quantities from 1–8 people, capped by stock
+- Recipe completion subtracts only the scaled quantities from matched items
 - Pull-to-refresh and database error handling
 - Automatic AI recipes using all safe, unconsumed food
 - Rescue-soon ingredients prioritized ahead of fresher food
@@ -48,7 +53,14 @@ Expected function response:
       "summary": "Short description",
       "time_minutes": 20,
       "difficulty": "Easy",
-      "ingredients_used": ["Baby spinach"],
+      "servings": 2,
+      "ingredients_used": [
+        {
+          "name": "Baby spinach",
+          "quantity": 0.5,
+          "unit": "bag"
+        }
+      ],
       "steps": ["First step", "Second step"],
       "waste_saving_tip": "Storage or reuse advice"
     }
