@@ -1,5 +1,9 @@
-import 'package:flutter/material.dart';
+import 'dart:async';
 
+import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import '../data/expiry_notification_service.dart';
 import '../data/fridge_repository.dart';
 import '../data/openai_recipe_service.dart';
 import '../domain/fridge_item.dart';
@@ -35,8 +39,16 @@ class FridgePage extends StatefulWidget {
 }
 
 class _FridgePageState extends State<FridgePage> {
+  static const _notifiedExpiryItemsKey = 'fridge_notified_expiry_items_v1';
+  static const _notificationTimeKey = 'fridge_notification_time_minutes_v1';
+  static const _defaultNotificationTimeMinutes = 9 * 60;
+
   late final RecipeSuggestionService _recipeService;
   late final FridgeRepository _fridgeRepository;
+  final ExpiryNotificationService _notificationService =
+      const ExpiryNotificationService();
+  final SharedPreferencesAsync _preferences = SharedPreferencesAsync();
+  Timer? _expiryCheckTimer;
   List<FridgeItem> _items = const [];
 
   List<RecipeSuggestion> _recipes = const [];
@@ -44,6 +56,10 @@ class _FridgePageState extends State<FridgePage> {
   String? _recipeError;
   bool _isLoading = true;
   bool _isGenerating = false;
+  bool _notificationStatusReady = false;
+  int _notificationTimeMinutes = _defaultNotificationTimeMinutes;
+  ExpiryNotificationPermission _notificationPermission =
+      ExpiryNotificationPermission.unsupported;
 
   @override
   void initState() {
@@ -51,11 +67,125 @@ class _FridgePageState extends State<FridgePage> {
     _recipeService = widget.recipeService ?? const OpenAiRecipeService();
     _fridgeRepository =
         widget.fridgeRepository ?? const SupabaseFridgeRepository();
+    _initializeNotifications();
     _loadItems();
+    _expiryCheckTimer = Timer.periodic(
+      const Duration(minutes: 1),
+      (_) => _loadItems(refreshRecipes: false, showLoading: false),
+    );
   }
 
-  Future<void> _loadItems() async {
-    if (mounted) {
+  @override
+  void dispose() {
+    _expiryCheckTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _initializeNotifications() async {
+    final savedTime = await _preferences.getInt(_notificationTimeKey);
+    final permission = await _notificationService.currentPermission();
+    if (!mounted) return;
+    setState(() {
+      _notificationTimeMinutes = savedTime?.clamp(0, (24 * 60) - 1).toInt() ??
+          _defaultNotificationTimeMinutes;
+      _notificationPermission = permission;
+      _notificationStatusReady = true;
+    });
+    if (permission == ExpiryNotificationPermission.granted &&
+        _items.isNotEmpty) {
+      await _notifyNewExpiringItems(_items);
+    }
+  }
+
+  Future<void> _enableNotifications() async {
+    final permission = await _notificationService.requestPermission();
+    if (!mounted) return;
+    setState(() => _notificationPermission = permission);
+
+    if (permission == ExpiryNotificationPermission.granted) {
+      _showMessage('Expiry notifications enabled.');
+      await _notifyNewExpiringItems(_items);
+    } else if (permission == ExpiryNotificationPermission.denied) {
+      _showMessage('Notifications are blocked in your browser settings.');
+    }
+  }
+
+  Future<void> _selectNotificationTime() async {
+    final selected = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay(
+        hour: _notificationTimeMinutes ~/ 60,
+        minute: _notificationTimeMinutes % 60,
+      ),
+      helpText: 'Choose your expiry reminder time',
+    );
+    if (selected == null || !mounted) return;
+
+    final minutes = selected.hour * 60 + selected.minute;
+    await _preferences.setInt(_notificationTimeKey, minutes);
+    if (!mounted) return;
+    setState(() => _notificationTimeMinutes = minutes);
+    _showMessage('Daily reminder time updated.');
+    await _notifyNewExpiringItems(_items);
+  }
+
+  Future<void> _notifyNewExpiringItems(List<FridgeItem> items) async {
+    if (_notificationPermission != ExpiryNotificationPermission.granted) {
+      return;
+    }
+
+    final now = DateTime.now();
+    final currentMinutes = now.hour * 60 + now.minute;
+    if (currentMinutes != _notificationTimeMinutes) return;
+
+    final expiringItems = items.where((item) {
+      final status = item.statusAt(now);
+      return !item.isConsumed &&
+          (status == FridgeItemStatus.today || status == FridgeItemStatus.soon);
+    }).toList(growable: false);
+    if (expiringItems.isEmpty) return;
+
+    final notified =
+        (await _preferences.getStringList(_notifiedExpiryItemsKey) ?? const [])
+            .toSet();
+    final newItems = expiringItems
+        .where((item) => !notified.contains(_expiryNotificationKey(item)))
+        .toList(growable: false);
+    if (newItems.isEmpty) return;
+
+    final names = newItems.take(3).map((item) => item.name).join(', ');
+    final remainingCount = newItems.length - 3;
+    final body = remainingCount > 0
+        ? '$names and $remainingCount more need rescuing soon.'
+        : '$names ${newItems.length == 1 ? 'needs' : 'need'} rescuing soon.';
+
+    try {
+      _notificationService.show(
+        title: newItems.length == 1
+            ? '${newItems.first.name} expires soon'
+            : '${newItems.length} foods expire soon',
+        body: body,
+        tag: 'fridge-expiry-${newItems.map((item) => item.id).join('-')}',
+      );
+      notified.addAll(newItems.map(_expiryNotificationKey));
+      await _preferences.setStringList(
+        _notifiedExpiryItemsKey,
+        notified.take(300).toList(growable: false),
+      );
+    } catch (_) {
+      // A later refresh will retry if the browser could not show it.
+    }
+  }
+
+  String _expiryNotificationKey(FridgeItem item) {
+    return '${item.id}:${item.expiresOn?.toIso8601String() ?? 'none'}';
+  }
+
+  Future<void> _loadItems({
+    bool refreshRecipes = true,
+    bool showLoading = true,
+  }) async {
+    if (mounted && showLoading) {
       setState(() {
         _isLoading = true;
         _loadError = null;
@@ -70,7 +200,8 @@ class _FridgePageState extends State<FridgePage> {
         _items = items;
         _isLoading = false;
       });
-      await _generateRecipes();
+      await _notifyNewExpiringItems(items);
+      if (refreshRecipes) await _generateRecipes();
     } catch (_) {
       if (!mounted) return;
       setState(() {
@@ -324,6 +455,23 @@ class _FridgePageState extends State<FridgePage> {
               child: CustomScrollView(
                 physics: const AlwaysScrollableScrollPhysics(),
                 slivers: [
+                  if (_notificationStatusReady &&
+                      _notificationPermission !=
+                          ExpiryNotificationPermission.unsupported)
+                    SliverPadding(
+                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                      sliver: SliverToBoxAdapter(
+                        child: _ExpiryNotificationBanner(
+                          permission: _notificationPermission,
+                          notificationTime: TimeOfDay(
+                            hour: _notificationTimeMinutes ~/ 60,
+                            minute: _notificationTimeMinutes % 60,
+                          ),
+                          onEnable: _enableNotifications,
+                          onChangeTime: _selectNotificationTime,
+                        ),
+                      ),
+                    ),
                   SliverPadding(
                     padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
                     sliver: SliverToBoxAdapter(
@@ -412,6 +560,111 @@ class _FridgePageState extends State<FridgePage> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _ExpiryNotificationBanner extends StatelessWidget {
+  const _ExpiryNotificationBanner({
+    required this.permission,
+    required this.notificationTime,
+    required this.onEnable,
+    required this.onChangeTime,
+  });
+
+  final ExpiryNotificationPermission permission;
+  final TimeOfDay notificationTime;
+  final VoidCallback onEnable;
+  final VoidCallback onChangeTime;
+
+  @override
+  Widget build(BuildContext context) {
+    final isEnabled = permission == ExpiryNotificationPermission.granted;
+    final isDenied = permission == ExpiryNotificationPermission.denied;
+    final background = isEnabled
+        ? const Color(0xFFE5F6E9)
+        : isDenied
+            ? const Color(0xFFFFF3D6)
+            : const Color(0xFFF0ECFF);
+    final foreground = isEnabled
+        ? const Color(0xFF176B3A)
+        : isDenied
+            ? const Color(0xFF8A6100)
+            : const Color(0xFF5F43C8);
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                isEnabled
+                    ? Icons.notifications_active_rounded
+                    : isDenied
+                        ? Icons.notifications_off_outlined
+                        : Icons.notifications_none_rounded,
+                color: foreground,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      isEnabled
+                          ? 'Expiry notifications are on'
+                          : isDenied
+                              ? 'Notifications are blocked'
+                              : 'Get expiry reminders',
+                      style: TextStyle(
+                        color: foreground,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      isEnabled
+                          ? 'We will alert you at your chosen time.'
+                          : isDenied
+                              ? 'Allow notifications in your browser settings.'
+                              : 'Enable alerts for newly expiring fridge items.',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              OutlinedButton.icon(
+                onPressed: onChangeTime,
+                icon: const Icon(Icons.schedule_rounded, size: 18),
+                label: Text(notificationTime.format(context)),
+                style: OutlinedButton.styleFrom(foregroundColor: foreground),
+              ),
+              const Spacer(),
+              if (!isEnabled && !isDenied)
+                FilledButton.tonal(
+                  onPressed: onEnable,
+                  child: const Text('Enable'),
+                )
+              else if (isEnabled)
+                TextButton(
+                  onPressed: onChangeTime,
+                  child: const Text('Change time'),
+                ),
+            ],
+          ),
+        ],
       ),
     );
   }
