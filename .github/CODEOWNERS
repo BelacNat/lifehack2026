@@ -1,0 +1,17 @@
+# Documents ownership so it's clear on every PR whose review to ping.
+# Doesn't block merges by itself — see TEAM_SPLIT.md for the git workflow.
+
+/lib/features/inventory/   @person1
+
+/lib/features/fridge/      @person2
+
+/lib/features/quests/      @person3
+
+/lib/features/dashboard/   @person4
+
+# Shared / append-only — touch with care, keep diffs additive
+/lib/core/                 @person4
+/lib/app.dart              @person4
+/lib/main.dart             @person4
+/pubspec.yaml              @person4
+/supabase/                 @person4

@@ -1,17 +1,50 @@
-# eco_quest
+# EcoHabit — LifeHack 2026
 
-A new Flutter project.
+Sustainability habit app: track your fridge inventory, rescue food before it
+expires, and build streaks through eco quests. See `TEAM_SPLIT.md` for how
+the 4-person team divides the work.
 
-## Getting Started
+## Stack
 
-This project is a starting point for a Flutter application.
+- Flutter + Dart
+- `go_router` (bottom-nav shell navigation)
+- Supabase (Postgres, Auth) via `supabase_flutter`
 
-A few resources to get you started if this is your first Flutter project:
+## Getting started
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+```bash
+cp .env.example .env   # fill in SUPABASE_ANON_KEY
+flutter pub get
+flutter run
+```
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+## Project layout
+
+```
+lib/
+  main.dart                          Loads env, initializes Supabase, runs app
+  app.dart                           MaterialApp.router + theme
+  core/
+    navigation/
+      app_router.dart                go_router config (append-only branches)
+      nav_items.dart                 Bottom nav tabs (append-only list)
+      root_shell.dart                Bottom-nav scaffold
+    supabase/
+      supabase_client.dart           Shared Supabase client accessor
+    theme/
+      app_theme.dart
+  features/
+    dashboard/    presentation/      Person 4 — Impact + Home
+    inventory/    presentation/      Person 1 — Pause Before Purchase
+    fridge/       presentation/      Person 2 — Rescue My Fridge
+    quests/       presentation/      Person 3 — EcoQuests & Rewards
+supabase/
+  migrations/     One timestamped SQL file per feature, see its README
+```
+
+## Useful commands
+
+- `flutter run` — run on a connected device/emulator
+- `flutter analyze` — static analysis / lints
+- `flutter test` — run tests
+- `flutter build apk` / `flutter build ios` / `flutter build web` — release builds
