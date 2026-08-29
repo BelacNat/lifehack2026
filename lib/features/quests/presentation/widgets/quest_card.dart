@@ -63,16 +63,29 @@ class QuestCard extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 8),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
-                  child: LinearProgressIndicator(
-                    value: quest.progress.clamp(0, 1),
-                    minHeight: 8,
-                    backgroundColor: theme.colorScheme.surface,
-                    color: claimed
-                        ? theme.colorScheme.outline
-                        : theme.colorScheme.primary,
-                  ),
+                Row(
+                  children: [
+                    Expanded(
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: LinearProgressIndicator(
+                          value: quest.progress.clamp(0, 1),
+                          minHeight: 8,
+                          backgroundColor: theme.colorScheme.surface,
+                          color: claimed
+                              ? theme.colorScheme.outline
+                              : theme.colorScheme.primary,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      '${(quest.progress.clamp(0, 1) * 100).round()}%',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
