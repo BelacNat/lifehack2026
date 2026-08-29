@@ -37,13 +37,32 @@ create merge conflicts either way.
 
 The platform folders (`android/`, `ios/`, `web/`, etc.) are already
 committed — don't run `flutter create` again, it'll just churn generated
-files and cause conflicts. Each person just needs to:
+files and cause conflicts.
+
+**First person only:** run this, then commit and push `pubspec.lock` to
+`main` before anyone else runs `pub get`. Everyone locks the same dependency
+versions instead of each generating their own lockfile independently
+(which resolves against whatever's newest on pub.dev *that day* and
+conflicts the moment two people's diverge).
 
 ```bash
 cp .env.example .env   # fill in SUPABASE_ANON_KEY
+flutter pub get        # generates pubspec.lock
+git add pubspec.lock && git commit -m "Lock dependency versions" && git push
+```
+
+**Everyone else**, after that lands on `main`:
+
+```bash
+cp .env.example .env   # fill in SUPABASE_ANON_KEY
+git pull origin main --rebase   # or merge main into your feature branch
 flutter pub get
 flutter run
 ```
+
+IDE files (`.idea/`, `*.iml`, `.vscode/`) are gitignored — don't force-add
+them. They're personal editor state (including absolute paths to your local
+Flutter SDK) and would conflict on every commit if committed.
 
 ## Git workflow
 
