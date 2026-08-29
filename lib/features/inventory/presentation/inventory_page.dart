@@ -159,6 +159,26 @@ class _InventoryPageState extends State<InventoryPage> {
     }
   }
 
+  void _ignoreWarning(ShoppingSuggestion suggestion) {
+    final current = _result;
+    if (current == null) return;
+    setState(() {
+      _result = ShoppingListResult(
+        items: current.items,
+        suggestions: current.suggestions
+            .where((item) => !identical(item, suggestion))
+            .toList(),
+      );
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'Warning ignored — ${suggestion.item.name} stays on your list.',
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
@@ -217,6 +237,7 @@ class _InventoryPageState extends State<InventoryPage> {
               result: _result!,
               savingSuggestion: _savingAvoidance,
               onSkip: _skipDuplicate,
+              onIgnore: _ignoreWarning,
             ),
           ],
           const SizedBox(height: 28),
@@ -485,11 +506,13 @@ class _ResultCard extends StatelessWidget {
   const _ResultCard({
     required this.result,
     required this.onSkip,
+    required this.onIgnore,
     required this.savingSuggestion,
   });
 
   final ShoppingListResult result;
   final ValueChanged<ShoppingSuggestion> onSkip;
+  final ValueChanged<ShoppingSuggestion> onIgnore;
   final ShoppingSuggestion? savingSuggestion;
 
   @override
@@ -534,19 +557,33 @@ class _ResultCard extends StatelessWidget {
                     children: [
                       Text('• ${suggestion.message}'),
                       const SizedBox(height: 6),
-                      FilledButton.tonalIcon(
-                        onPressed: savingSuggestion == null
-                            ? () => onSkip(suggestion)
-                            : null,
-                        icon: identical(savingSuggestion, suggestion)
-                            ? const SizedBox.square(
-                                dimension: 16,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : const Icon(Icons.remove_shopping_cart_outlined),
-                        label: const Text('I’ll skip this'),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          FilledButton.tonalIcon(
+                            onPressed: savingSuggestion == null
+                                ? () => onSkip(suggestion)
+                                : null,
+                            icon: identical(savingSuggestion, suggestion)
+                                ? const SizedBox.square(
+                                    dimension: 16,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : const Icon(
+                                    Icons.remove_shopping_cart_outlined,
+                                  ),
+                            label: const Text('I’ll skip this'),
+                          ),
+                          TextButton(
+                            onPressed: savingSuggestion == null
+                                ? () => onIgnore(suggestion)
+                                : null,
+                            child: const Text('Ignore warning'),
+                          ),
+                        ],
                       ),
                     ],
                   ),

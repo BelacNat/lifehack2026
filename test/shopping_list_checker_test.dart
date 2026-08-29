@@ -75,4 +75,22 @@ void main() {
 
     expect(result.suggestions, hasLength(2));
   });
+
+  test('flags whole-word partial item names as possible duplicates', () {
+    final result = checker.check(
+      'whole milk, buttermilk',
+      const [
+        InventoryItem(
+          name: 'milk',
+          quantity: 500,
+          measurement: ItemMeasurement.liquid,
+        ),
+      ],
+    );
+
+    expect(result.suggestions, hasLength(1));
+    expect(result.suggestions.single.item.name, 'whole milk');
+    expect(result.suggestions.single.isPartialMatch, isTrue);
+    expect(result.suggestions.single.message, contains('Possible duplicate'));
+  });
 }

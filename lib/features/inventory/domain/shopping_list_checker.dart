@@ -1,15 +1,18 @@
 import 'inventory_item.dart';
 
 class ShoppingSuggestion {
-  const ShoppingSuggestion(
-      {required this.item,
-      required this.inventoryItem,
-      required this.message,
-      required this.covered});
+  const ShoppingSuggestion({
+    required this.item,
+    required this.inventoryItem,
+    required this.message,
+    required this.covered,
+    this.isPartialMatch = false,
+  });
   final InventoryItem item;
   final InventoryItem inventoryItem;
   final String message;
   final bool covered;
+  final bool isPartialMatch;
 }
 
 class ShoppingListResult {
@@ -134,7 +137,20 @@ class ShoppingListChecker {
 
     final suggestions = <ShoppingSuggestion>[];
     for (final wanted in parsed) {
-      final atHome = homeByName[_normaliseName(wanted.name)];
+      final wantedName = _normaliseName(wanted.name);
+      var atHome = homeByName[wantedName];
+      var isPartialMatch = false;
+      if (atHome == null) {
+        final partialMatches = homeByName.entries
+            .where((entry) => _namesPartiallyMatch(wantedName, entry.key))
+            .toList()
+          ..sort((a, b) => _nameDistance(wantedName, a.key)
+              .compareTo(_nameDistance(wantedName, b.key)));
+        if (partialMatches.isNotEmpty) {
+          atHome = partialMatches.first.value;
+          isPartialMatch = true;
+        }
+      }
       if (atHome == null || atHome.quantity <= 0) continue;
       final compatibleUnits = wanted.measurement == atHome.measurement;
       final covered = compatibleUnits && atHome.quantity >= wanted.quantity;
@@ -143,11 +159,14 @@ class ShoppingListChecker {
         item: wanted,
         inventoryItem: atHome,
         covered: covered,
-        message: covered
-            ? 'You already have $homeAmount. Use it first before buying more!'
-            : compatibleUnits
-                ? 'You have $homeAmount. Check how much you really need before buying more.'
-                : 'You already have $homeAmount in your inventory. Check it before buying more!',
+        isPartialMatch: isPartialMatch,
+        message: isPartialMatch
+            ? 'Possible duplicate: you have $homeAmount in your inventory. Check it before buying ${wanted.name}.'
+            : covered
+                ? 'You already have $homeAmount. Use it first before buying more!'
+                : compatibleUnits
+                    ? 'You have $homeAmount. Check how much you really need before buying more.'
+                    : 'You already have $homeAmount in your inventory. Check it before buying more!',
       ));
     }
     return ShoppingListResult(items: parsed, suggestions: suggestions);
@@ -229,5 +248,22 @@ class ShoppingListChecker {
       name = name.substring(0, name.length - 1);
     }
     return name;
+  }
+
+  static bool _namesPartiallyMatch(String first, String second) {
+    final firstWords =
+        first.split(' ').where((word) => word.length >= 3).toSet();
+    final secondWords =
+        second.split(' ').where((word) => word.length >= 3).toSet();
+    if (firstWords.isEmpty || secondWords.isEmpty) return false;
+    return firstWords.containsAll(secondWords) ||
+        secondWords.containsAll(firstWords);
+  }
+
+  static int _nameDistance(String first, String second) {
+    final firstWords = first.split(' ').toSet();
+    final secondWords = second.split(' ').toSet();
+    return firstWords.difference(secondWords).length +
+        secondWords.difference(firstWords).length;
   }
 }

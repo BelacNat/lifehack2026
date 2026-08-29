@@ -139,6 +139,38 @@ void main() {
         tester.widget<TextField>(find.byType(TextField).first);
     expect(shoppingField.controller!.text, isEmpty);
   });
+
+  testWidgets('ignores a possible duplicate without changing the list',
+      (tester) async {
+    final repository = _FakeInventoryRepository()
+      ..items.add(
+        InventoryItem(
+          id: 9,
+          name: 'milk',
+          quantity: 500,
+          measurement: ItemMeasurement.liquid,
+          expirationDate: DateTime(2026, 9, 20),
+        ),
+      );
+    await tester.pumpWidget(
+      MaterialApp(home: InventoryPage(repository: repository)),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField).first, 'whole milk');
+    await tester.tap(find.text('Check before I shop'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Possible duplicate'), findsOneWidget);
+    await tester.tap(find.text('Ignore warning'));
+    await tester.pumpAndSettle();
+
+    expect(repository.avoidedPurchases, isEmpty);
+    final shoppingField =
+        tester.widget<TextField>(find.byType(TextField).first);
+    expect(shoppingField.controller!.text, 'whole milk');
+    expect(find.textContaining('stays on your list'), findsOneWidget);
+  });
 }
 
 class _FakeInventoryRepository implements InventoryRepository {
